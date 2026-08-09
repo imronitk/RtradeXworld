@@ -332,16 +332,16 @@ function CalendarView({ trades }) {
         <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Win Rate</p><p className="text-base font-semibold">{monthWinRate.toFixed(0)}%</p></div>
       </div>
 
-      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
-        <div className="flex items-center justify-between mb-4">
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-3">
+        <div className="flex items-center justify-between mb-4 px-1">
           <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1A1B1F] text-[#9CA3AF]"><ChevronLeft size={16} /></button>
           <p className="text-sm font-semibold">{MONTH_NAMES[month]} {year}</p>
           <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1A1B1F] text-[#9CA3AF]"><ChevronLeft size={16} className="rotate-180" /></button>
         </div>
-        <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+        <div className="grid grid-cols-7 gap-2 mb-2">
           {WEEKDAYS.map((w, i) => <div key={i} className="text-center text-[10px] text-[#6B7280] font-medium">{w}</div>)}
         </div>
-        <div className="grid grid-cols-7 gap-1.5">
+        <div className="grid grid-cols-7 gap-2">
           {cells.map((d, i) => {
             if (d === null) return <div key={i} />;
             const ds = dateStr(d);
@@ -353,10 +353,11 @@ function CalendarView({ trades }) {
               else if (info.pnl < 0) bg = 'bg-[#EF4444]/20 text-[#EF4444] border border-[#EF4444]/40';
               else bg = 'bg-[#3A3B40] text-[#E8E9EC]';
             }
+            const pnlLabel = info ? (info.pnl >= 0 ? `+${Math.round(info.pnl)}` : `${Math.round(info.pnl)}`) : null;
             return (
-              <button key={i} onClick={() => setSelected(isSelected ? null : ds)} className={`aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-medium ${bg} ${isSelected ? 'ring-2 ring-white/40' : ''}`}>
+              <button key={i} onClick={() => setSelected(isSelected ? null : ds)} className={`aspect-[4/5] rounded-xl flex flex-col items-center justify-center gap-0.5 text-sm font-medium px-0.5 ${bg} ${isSelected ? 'ring-2 ring-white/40' : ''}`}>
                 <span>{d}</span>
-                {info && <span className="w-1 h-1 rounded-full bg-current mt-0.5" />}
+                {pnlLabel && <span className="text-[9px] font-semibold leading-none truncate max-w-full">{pnlLabel}</span>}
               </button>
             );
           })}
