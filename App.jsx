@@ -73,12 +73,12 @@ const inputCls = "w-full bg-[#1A1B1F] border border-white/[0.08] rounded-xl px-3
 
 function fmtMoney(n) { const sign = n > 0 ? '+' : n < 0 ? '-' : ''; return `${sign}$${Math.abs(n).toFixed(2)}`; }
 function Field({ label, children }) { return <div><label className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1.5 block">{label}</label>{children}</div>; }
-function StatCard({ label, value, positive, negative, icon: Icon, sub }) {
+function StatCard({ label, value, positive, negative, icon: Icon, sub, compact }) {
   const color = positive ? '#22C55E' : negative ? '#EF4444' : '#E8E9EC';
   return (
-    <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
-      <div className="flex items-center gap-1.5 text-[#6B7280] mb-2">{Icon && <Icon size={13} />}<span className="text-[10.5px] font-medium uppercase tracking-wide">{label}</span></div>
-      <p className="text-xl font-semibold tracking-tight" style={{ color }}>{value}</p>
+    <div className={`rounded-2xl bg-[#141519] border border-white/[0.06] overflow-hidden min-w-0 ${compact ? 'p-3' : 'p-4'}`}>
+      <div className="flex items-center gap-1.5 text-[#6B7280] mb-2 min-w-0">{Icon && <Icon size={13} className="shrink-0" />}<span className="text-[10px] font-medium uppercase tracking-wide truncate">{label}</span></div>
+      <p className={`font-semibold tracking-tight truncate ${compact ? 'text-base' : 'text-xl'}`} style={{ color }}>{value}</p>
       {sub && <p className="text-[11px] text-[#6B7280] mt-0.5">{sub}</p>}
     </div>
   );
@@ -138,9 +138,9 @@ function DashboardView({ trades, loading }) {
         </div>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <StatCard label="Today" value={fmtMoney(todayPnl)} positive={todayPnl > 0} negative={todayPnl < 0} />
-        <StatCard label="This Week" value={fmtMoney(weekPnl)} positive={weekPnl > 0} negative={weekPnl < 0} />
-        <StatCard label="This Month" value={fmtMoney(monthPnl)} positive={monthPnl > 0} negative={monthPnl < 0} />
+        <StatCard label="Today" value={fmtMoney(todayPnl)} positive={todayPnl > 0} negative={todayPnl < 0} compact />
+        <StatCard label="Week" value={fmtMoney(weekPnl)} positive={weekPnl > 0} negative={weekPnl < 0} compact />
+        <StatCard label="Month" value={fmtMoney(monthPnl)} positive={monthPnl > 0} negative={monthPnl < 0} compact />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} sub={`${wins.length}W / ${losses.length}L`} />
