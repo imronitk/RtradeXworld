@@ -387,7 +387,7 @@ export default function App() {
   const [eyebrow, title] = titles[active];
 
   return (
-    <div className="min-h-screen w-full bg-[#0A0B0D] text-[#E8E9EC] font-sans flex flex-col">
+    <div className="min-h-screen w-full bg-[#0A0B0D] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
       <header className="px-5 pt-6 pb-4 flex items-center justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-[#6B7280] flex items-center gap-1.5">
