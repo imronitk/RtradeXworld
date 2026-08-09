@@ -292,6 +292,98 @@ function LedgerView({ trades, onEdit }) {
   );
 }
 
+const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+function CalendarView({ trades }) {
+  const [cursor, setCursor] = useState(new Date());
+  const [selected, setSelected] = useState(null);
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+
+  const dayMap = {};
+  trades.forEach(t => {
+    if (!t.date) return;
+    if (!dayMap[t.date]) dayMap[t.date] = { pnl: 0, count: 0 };
+    dayMap[t.date].pnl += Number(t.pnl) || 0;
+    dayMap[t.date].count += 1;
+  });
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const cells = [];
+  for (let i = 0; i < firstWeekday; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const monthTrades = trades.filter(t => t.date && t.date.startsWith(monthPrefix));
+  const monthPnl = monthTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
+  const monthWins = monthTrades.filter(t => Number(t.pnl) > 0).length;
+  const monthWinRate = monthTrades.length > 0 ? (monthWins / monthTrades.length) * 100 : 0;
+
+  const dateStr = (d) => `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const selectedTrades = selected ? trades.filter(t => t.date === selected).sort((a, b) => Number(b.id || 0) - Number(a.id || 0)) : [];
+
+  return (
+    <>
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4 grid grid-cols-3 gap-3">
+        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Month P&L</p><p className="text-base font-semibold truncate" style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(monthPnl)}</p></div>
+        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Trades</p><p className="text-base font-semibold">{monthTrades.length}</p></div>
+        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Win Rate</p><p className="text-base font-semibold">{monthWinRate.toFixed(0)}%</p></div>
+      </div>
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+        <div className="flex items-center justify-between mb-4">
+          <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1A1B1F] text-[#9CA3AF]"><ChevronLeft size={16} /></button>
+          <p className="text-sm font-semibold">{MONTH_NAMES[month]} {year}</p>
+          <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1A1B1F] text-[#9CA3AF]"><ChevronLeft size={16} className="rotate-180" /></button>
+        </div>
+        <div className="grid grid-cols-7 gap-1.5 mb-1.5">
+          {WEEKDAYS.map((w, i) => <div key={i} className="text-center text-[10px] text-[#6B7280] font-medium">{w}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-1.5">
+          {cells.map((d, i) => {
+            if (d === null) return <div key={i} />;
+            const ds = dateStr(d);
+            const info = dayMap[ds];
+            const isSelected = selected === ds;
+            let bg = 'bg-[#1A1B1F] text-[#6B7280]';
+            if (info) {
+              if (info.pnl > 0) bg = 'bg-[#22C55E]/20 text-[#22C55E] border border-[#22C55E]/40';
+              else if (info.pnl < 0) bg = 'bg-[#EF4444]/20 text-[#EF4444] border border-[#EF4444]/40';
+              else bg = 'bg-[#3A3B40] text-[#E8E9EC]';
+            }
+            return (
+              <button key={i} onClick={() => setSelected(isSelected ? null : ds)} className={`aspect-square rounded-lg flex flex-col items-center justify-center text-xs font-medium ${bg} ${isSelected ? 'ring-2 ring-white/40' : ''}`}>
+                <span>{d}</span>
+                {info && <span className="w-1 h-1 rounded-full bg-current mt-0.5" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {selected && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">{selected}</p>
+          {selectedTrades.length === 0 ? (
+            <p className="text-sm text-[#6B7280]">No trades this day.</p>
+          ) : (
+            <div className="space-y-2">
+              {selectedTrades.map(t => (
+                <div key={t.id} className="rounded-xl bg-[#1A1B1F] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
+                  <div><p className="text-sm font-medium">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'}</span></p><p className="text-[11px] text-[#6B7280]">{t.strategy || 'No strategy noted'}</p></div>
+                  <p className="text-sm font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
 function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   const [subview, setSubview] = useState('add');
   const [editingTrade, setEditingTrade] = useState(null);
@@ -403,7 +495,8 @@ export default function App() {
       <main className="flex-1 px-5 pb-28 space-y-4 overflow-y-auto">
         {active === 'dashboard' && <DashboardView trades={trades} loading={loading} />}
         {active === 'trades' && <TradesTab trades={trades} onAdd={handleAdd} onUpdate={handleUpdate} onDelete={handleDelete} dbError={dbError} />}
-        {(active === 'calendar' || active === 'stats' || active === 'journal') && (
+        {active === 'calendar' && <CalendarView trades={trades} />}
+        {(active === 'stats' || active === 'journal') && (
           <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center"><p className="text-sm text-[#6B7280]">This screen is built in a later step.</p></div>
         )}
       </main>
