@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle } from 'lucide-react';
-import { AreaChart, Area, ResponsiveContainer, YAxis } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
 
 // ===== SUPABASE CONNECTION =====
 const SUPABASE_URL = 'https://mggvpiwlgrdusnbxfuxd.supabase.co';
@@ -418,6 +418,110 @@ function CalendarView({ trades }) {
   );
 }
 
+function GroupTable({ title, groups, icon: Icon }) {
+  if (groups.length === 0) return null;
+  return (
+    <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+      <div className="flex items-center gap-1.5 text-[#6B7280] mb-3"><Icon size={14} /><p className="text-[11px] uppercase tracking-wide font-medium">{title}</p></div>
+      <div className="space-y-2">
+        {groups.map(g => (
+          <div key={g.key} className="flex items-center justify-between">
+            <div className="min-w-0 flex-1 mr-3">
+              <p className="text-sm font-medium truncate">{g.key}</p>
+              <p className="text-[11px] text-[#6B7280]">{g.count} trade{g.count !== 1 ? 's' : ''} · {g.count > 0 ? Math.round((g.wins / g.count) * 100) : 0}% win</p>
+            </div>
+            <p className="text-sm font-semibold shrink-0" style={{ color: g.pnl > 0 ? '#22C55E' : g.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{g.pnl > 0 ? '+' : ''}{g.pnl.toFixed(2)}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatsView({ trades }) {
+  if (trades.length === 0) {
+    return (
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
+        <p className="text-sm font-medium mb-1">No trades yet</p>
+        <p className="text-[13px] text-[#6B7280] leading-relaxed">Log some trades and this screen will break down your edge — by strategy, by market, and over time.</p>
+      </div>
+    );
+  }
+
+  const totalPnl = trades.reduce((a, t) => a + (Number(t.pnl) || 0), 0);
+  const wins = trades.filter(t => Number(t.pnl) > 0);
+  const losses = trades.filter(t => Number(t.pnl) < 0);
+  const winRate = (wins.length / trades.length) * 100;
+  const grossProfit = wins.reduce((a, t) => a + Number(t.pnl), 0);
+  const grossLoss = Math.abs(losses.reduce((a, t) => a + Number(t.pnl), 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0);
+  const expectancy = totalPnl / trades.length;
+
+  function groupBy(keyFn) {
+    const map = {};
+    trades.forEach(t => {
+      const k = keyFn(t) || 'Unspecified';
+      if (!map[k]) map[k] = { key: k, pnl: 0, count: 0, wins: 0 };
+      map[k].pnl += Number(t.pnl) || 0;
+      map[k].count += 1;
+      if (Number(t.pnl) > 0) map[k].wins += 1;
+    });
+    return Object.values(map).sort((a, b) => b.pnl - a.pnl);
+  }
+  const byStrategy = groupBy(t => t.strategy && t.strategy.trim());
+  const byMarket = groupBy(t => t.market);
+
+  const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
+  let running = 0, peak = -Infinity, maxDD = 0;
+  chronological.forEach(t => {
+    running += Number(t.pnl) || 0;
+    peak = Math.max(peak, running);
+    maxDD = Math.max(maxDD, peak - running);
+  });
+
+  const monthMap = {};
+  trades.forEach(t => {
+    if (!t.date) return;
+    const key = t.date.slice(0, 7);
+    monthMap[key] = (monthMap[key] || 0) + (Number(t.pnl) || 0);
+  });
+  const monthKeys = Object.keys(monthMap).sort().slice(-6);
+  const monthData = monthKeys.map(k => {
+    const [y, m] = k.split('-');
+    return { label: MONTH_NAMES[Number(m) - 1].slice(0, 3), pnl: monthMap[k] };
+  });
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
+        <StatCard label="Profit Factor" value={profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)} icon={Activity} positive={profitFactor > 1} negative={profitFactor < 1 && profitFactor !== Infinity} />
+        <StatCard label="Expectancy" value={fmtMoney(expectancy) + '/trade'} positive={expectancy > 0} negative={expectancy < 0} icon={TrendingUp} />
+        <StatCard label="Max Drawdown" value={'-' + fmtMoney(maxDD).replace('+', '').replace('-', '')} negative={maxDD > 0} icon={TrendingDown} />
+      </div>
+
+      {monthData.length > 0 && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Monthly Performance</p>
+          <div className="h-40">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthData}>
+                <XAxis dataKey="label" tick={{ fill: '#6B7280', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Bar dataKey="pnl" radius={[4, 4, 0, 0]}>
+                  {monthData.map((m, i) => <Cell key={i} fill={m.pnl >= 0 ? '#22C55E' : '#EF4444'} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      <GroupTable title="By Strategy" groups={byStrategy} icon={Target} />
+      <GroupTable title="By Market" groups={byMarket} icon={BarChart3} />
+    </>
+  );
+}
+
 function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   const [subview, setSubview] = useState('add');
   const [editingTrade, setEditingTrade] = useState(null);
@@ -507,7 +611,7 @@ export default function App() {
     dashboard: ['Dashboard', 'Your Trading Overview'],
     trades: ['Trades', 'Log & Manage Trades'],
     calendar: ['Calendar', 'Your Trading Calendar'],
-    stats: ['Statistics', 'Coming soon'],
+    stats: ['Statistics', 'Your Trading Edge'],
     journal: ['Journal', 'Coming soon'],
   };
   const [eyebrow, title] = titles[active];
@@ -530,7 +634,8 @@ export default function App() {
         {active === 'dashboard' && <DashboardView trades={trades} loading={loading} />}
         {active === 'trades' && <TradesTab trades={trades} onAdd={handleAdd} onUpdate={handleUpdate} onDelete={handleDelete} dbError={dbError} />}
         {active === 'calendar' && <CalendarView trades={trades} />}
-        {(active === 'stats' || active === 'journal') && (
+        {active === 'stats' && <StatsView trades={trades} />}
+        {active === 'journal' && (
           <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center"><p className="text-sm text-[#6B7280]">This screen is built in a later step.</p></div>
         )}
       </main>
