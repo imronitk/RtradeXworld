@@ -367,21 +367,22 @@ function CalendarView({ trades }) {
             const isSelected = selected === ds;
             const style = info ? tierStyle(info.pnl) : { bg: '#1A1B1F', text: '#4B5563' };
             const pnlLabel = info ? (info.pnl >= 0 ? `+$${info.pnl.toFixed(2)}` : `-$${Math.abs(info.pnl).toFixed(2)}`) : null;
+            const pnlFontSize = pnlLabel && pnlLabel.length > 10 ? '6.5px' : pnlLabel && pnlLabel.length > 7 ? '7.5px' : '8.5px';
             return (
               <button
                 key={i}
                 onClick={() => setSelected(isSelected ? null : ds)}
                 style={{ backgroundColor: style.bg, color: style.text }}
-                className={`aspect-[3/4] rounded-lg flex flex-col items-center justify-center gap-0.5 px-0.5 ${isSelected ? 'ring-2 ring-white/60' : ''}`}
+                className={`aspect-[3/4] rounded-lg flex flex-col items-center justify-center gap-0.5 px-1 overflow-hidden ${isSelected ? 'ring-2 ring-white/60' : ''}`}
               >
                 <span className="text-sm font-semibold leading-none">{d}</span>
                 {info ? (
                   <>
-                    <span className="text-[8.5px] font-bold leading-none whitespace-nowrap">{pnlLabel}</span>
-                    <span className="text-[7.5px] leading-none opacity-80">{info.count} trade{info.count !== 1 ? 's' : ''}</span>
+                    <span style={{ fontSize: pnlFontSize }} className="font-bold leading-none whitespace-nowrap">{pnlLabel}</span>
+                    <span className="text-[7px] leading-none opacity-80 whitespace-nowrap">{info.count} trade{info.count !== 1 ? 's' : ''}</span>
                   </>
                 ) : (
-                  <span className="text-[7.5px] leading-none opacity-70">No data</span>
+                  <span className="text-[7px] leading-none opacity-70">No data</span>
                 )}
               </button>
             );
