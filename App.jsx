@@ -50,6 +50,37 @@ async function apiDelete(id) {
   if (!res.ok) throw new Error(`Database delete failed (${res.status}): ${await res.text()}`);
 }
 
+// ===== JOURNAL API =====
+function journalToDb(e) {
+  return {
+    date: e.date, mood: e.mood, confidence: e.confidence,
+    pre_market_plan: e.preMarketPlan, post_market_review: e.postMarketReview,
+    lessons_learned: e.lessonsLearned, mistakes: e.mistakes, tomorrow_focus: e.tomorrowFocus,
+  };
+}
+function journalFromDb(row) {
+  return {
+    id: row.id, date: row.date, mood: row.mood, confidence: row.confidence,
+    preMarketPlan: row.pre_market_plan, postMarketReview: row.post_market_review,
+    lessonsLearned: row.lessons_learned, mistakes: row.mistakes, tomorrowFocus: row.tomorrow_focus,
+  };
+}
+async function apiJournalList() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/journal_entries?select=*&order=date.desc&limit=30`, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Journal read failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).map(journalFromDb);
+}
+async function apiJournalUpsert(entry) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/journal_entries?on_conflict=date`, {
+    method: 'POST',
+    headers: { ...HEADERS, Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify(journalToDb(entry)),
+  });
+  if (!res.ok) throw new Error(`Journal save failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return journalFromDb(data[0]);
+}
+
 async function withRetry(fn, attempts = 2) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
@@ -522,6 +553,102 @@ function StatsView({ trades }) {
   );
 }
 
+const MOODS = ['Calm', 'Confident', 'Anxious', 'Excited', 'Frustrated', 'Neutral', 'Tired', 'Motivated'];
+
+function JournalView() {
+  const today = new Date().toISOString().slice(0, 10);
+  const empty = { date: today, mood: 'Calm', confidence: 3, preMarketPlan: '', postMarketReview: '', lessonsLearned: '', mistakes: '', tomorrowFocus: '' };
+  const [form, setForm] = useState(empty);
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(false);
+  const [error, setError] = useState('');
+  const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target ? e.target.value : e }));
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const data = await apiJournalList();
+        setEntries(data);
+        const todayEntry = data.find(e => e.date === today);
+        if (todayEntry) setForm(todayEntry);
+      } catch (e) {
+        console.error('[Journal] load failed:', e);
+        setError('Could not load journal entries: ' + e.message);
+      } finally { setLoading(false); }
+    })();
+  }, []);
+
+  function loadEntry(entry) { setForm(entry); setSavedMsg(false); }
+  function startNew() { setForm({ ...empty, date: today }); setSavedMsg(false); }
+
+  async function handleSave() {
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await withRetry(() => apiJournalUpsert(form));
+      setEntries(prev => {
+        const exists = prev.some(e => e.date === saved.date);
+        const updated = exists ? prev.map(e => e.date === saved.date ? saved : e) : [saved, ...prev];
+        return updated.sort((a, b) => new Date(b.date) - new Date(a.date));
+      });
+      setForm(saved);
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 1800);
+    } catch (e) {
+      console.error('[Journal] save failed:', e);
+      setError(e.message || 'Could not save journal entry.');
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">{form.date === today && !entries.some(e => e.date === form.date && e.date !== today) ? "Today's Entry" : `Editing ${form.date}`}</p>
+        {form.date !== today && <button onClick={startNew} className="text-xs font-medium text-[#22C55E]">+ New entry for today</button>}
+      </div>
+
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
+        <Field label="Date"><input type="date" value={form.date} onChange={set('date')} className={inputCls} /></Field>
+        <Field label="Mood"><select value={form.mood} onChange={set('mood')} className={inputCls}>{MOODS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
+        <Field label="Confidence"><div className="flex gap-2">{[1, 2, 3, 4, 5].map(n => (<button key={n} onClick={() => setForm(f => ({ ...f, confidence: n }))} className="p-1"><Star size={22} className={n <= (form.confidence || 0) ? 'fill-[#22C55E] text-[#22C55E]' : 'text-[#3A3B40]'} /></button>))}</div></Field>
+      </div>
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
+        <Field label="Pre-Market Plan"><textarea rows={3} placeholder="What's your plan for today?" value={form.preMarketPlan || ''} onChange={set('preMarketPlan')} className={inputCls} /></Field>
+        <Field label="Post-Market Review"><textarea rows={3} placeholder="How did the day actually go?" value={form.postMarketReview || ''} onChange={set('postMarketReview')} className={inputCls} /></Field>
+      </div>
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
+        <Field label="Lessons Learned"><textarea rows={2} value={form.lessonsLearned || ''} onChange={set('lessonsLearned')} className={inputCls} /></Field>
+        <Field label="Mistakes"><textarea rows={2} value={form.mistakes || ''} onChange={set('mistakes')} className={inputCls} /></Field>
+        <Field label="Tomorrow's Focus"><textarea rows={2} value={form.tomorrowFocus || ''} onChange={set('tomorrowFocus')} className={inputCls} /></Field>
+      </div>
+
+      <button onClick={handleSave} disabled={saving} className="w-full py-3.5 rounded-xl text-sm font-semibold bg-[#22C55E] text-black flex items-center justify-center gap-2">
+        {savedMsg ? <><Check size={16} /> Saved</> : saving ? 'Saving...' : 'Save Entry'}
+      </button>
+
+      {!loading && entries.length > 0 && (
+        <div className="pt-2">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-2">Past Entries</p>
+          <div className="space-y-2">
+            {entries.map(e => (
+              <button key={e.id} onClick={() => loadEntry(e)} className="w-full text-left rounded-xl bg-[#141519] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#1A1B1F]">
+                <div><p className="text-sm font-medium">{e.date}</p><p className="text-[11px] text-[#6B7280]">{e.mood} · Confidence {e.confidence}/5</p></div>
+                <ChevronLeft size={16} className="rotate-180 text-[#6B7280]" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   const [subview, setSubview] = useState('add');
   const [editingTrade, setEditingTrade] = useState(null);
@@ -612,7 +739,7 @@ export default function App() {
     trades: ['Trades', 'Log & Manage Trades'],
     calendar: ['Calendar', 'Your Trading Calendar'],
     stats: ['Statistics', 'Your Trading Edge'],
-    journal: ['Journal', 'Coming soon'],
+    journal: ['Journal', 'Daily Reflection'],
   };
   const [eyebrow, title] = titles[active];
 
@@ -635,9 +762,7 @@ export default function App() {
         {active === 'trades' && <TradesTab trades={trades} onAdd={handleAdd} onUpdate={handleUpdate} onDelete={handleDelete} dbError={dbError} />}
         {active === 'calendar' && <CalendarView trades={trades} />}
         {active === 'stats' && <StatsView trades={trades} />}
-        {active === 'journal' && (
-          <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center"><p className="text-sm text-[#6B7280]">This screen is built in a later step.</p></div>
-        )}
+        {active === 'journal' && <JournalView />}
       </main>
       <nav className="fixed bottom-0 left-0 right-0 bg-[#0A0B0D]/95 backdrop-blur-xl border-t border-white/[0.06] px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="flex justify-between max-w-md mx-auto">
