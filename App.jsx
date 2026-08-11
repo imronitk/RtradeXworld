@@ -324,6 +324,21 @@ function CalendarView({ trades }) {
   const dateStr = (d) => `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   const selectedTrades = selected ? trades.filter(t => t.date === selected).sort((a, b) => Number(b.id || 0) - Number(a.id || 0)) : [];
 
+  const maxAbsPnl = Math.max(1, ...Object.values(dayMap).map(v => Math.abs(v.pnl)));
+  function tierStyle(pnl) {
+    if (pnl === 0) return { bg: '#3A3B40', text: '#E8E9EC' };
+    const ratio = Math.abs(pnl) / maxAbsPnl;
+    const tier = ratio < 0.34 ? 0 : ratio < 0.67 ? 1 : 2;
+    if (pnl > 0) {
+      const bgs = ['#DCFCE7', '#86EFAC', '#22C55E'];
+      const texts = ['#166534', '#14532D', '#052E14'];
+      return { bg: bgs[tier], text: texts[tier] };
+    }
+    const bgs = ['#FEE2E2', '#FCA5A5', '#EF4444'];
+    const texts = ['#7F1D1D', '#7F1D1D', '#450A0A'];
+    return { bg: bgs[tier], text: texts[tier] };
+  }
+
   return (
     <>
       <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4 grid grid-cols-3 gap-3">
@@ -333,11 +348,14 @@ function CalendarView({ trades }) {
       </div>
 
       <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-2.5">
-        <div className="flex items-center justify-between mb-4 px-1.5">
+        <div className="flex items-center justify-between mb-1 px-1.5">
           <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1A1B1F] text-[#9CA3AF]"><ChevronLeft size={16} /></button>
           <p className="text-sm font-semibold">{MONTH_NAMES[month]} {year}</p>
           <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1A1B1F] text-[#9CA3AF]"><ChevronLeft size={16} className="rotate-180" /></button>
         </div>
+        <p className="text-center text-[11px] text-[#6B7280] mb-4">
+          {monthTrades.length} trade{monthTrades.length !== 1 ? 's' : ''} · <span style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#9CA3AF' }}>{fmtMoney(monthPnl)}</span>
+        </p>
         <div className="grid grid-cols-7 gap-1.5 mb-2">
           {WEEKDAYS.map((w, i) => <div key={i} className="text-center text-[10px] text-[#6B7280] font-medium">{w}</div>)}
         </div>
@@ -347,20 +365,34 @@ function CalendarView({ trades }) {
             const ds = dateStr(d);
             const info = dayMap[ds];
             const isSelected = selected === ds;
-            let bg = 'bg-[#1A1B1F] text-[#6B7280]';
-            if (info) {
-              if (info.pnl > 0) bg = 'bg-[#22C55E]/20 text-[#22C55E] border border-[#22C55E]/40';
-              else if (info.pnl < 0) bg = 'bg-[#EF4444]/20 text-[#EF4444] border border-[#EF4444]/40';
-              else bg = 'bg-[#3A3B40] text-[#E8E9EC]';
-            }
+            const style = info ? tierStyle(info.pnl) : { bg: '#1A1B1F', text: '#4B5563' };
             const pnlLabel = info ? (info.pnl >= 0 ? `+$${info.pnl.toFixed(2)}` : `-$${Math.abs(info.pnl).toFixed(2)}`) : null;
             return (
-              <button key={i} onClick={() => setSelected(isSelected ? null : ds)} className={`aspect-[3/4] rounded-xl flex flex-col items-center justify-center gap-1 text-base font-medium px-0.5 ${bg} ${isSelected ? 'ring-2 ring-white/40' : ''}`}>
-                <span>{d}</span>
-                {pnlLabel && <span className="text-[9.5px] font-semibold leading-none whitespace-nowrap">{pnlLabel}</span>}
+              <button
+                key={i}
+                onClick={() => setSelected(isSelected ? null : ds)}
+                style={{ backgroundColor: style.bg, color: style.text }}
+                className={`aspect-[3/4] rounded-lg flex flex-col items-center justify-center gap-0.5 px-0.5 ${isSelected ? 'ring-2 ring-white/60' : ''}`}
+              >
+                <span className="text-sm font-semibold leading-none">{d}</span>
+                {info ? (
+                  <>
+                    <span className="text-[8.5px] font-bold leading-none whitespace-nowrap">{pnlLabel}</span>
+                    <span className="text-[7.5px] leading-none opacity-80">{info.count} trade{info.count !== 1 ? 's' : ''}</span>
+                  </>
+                ) : (
+                  <span className="text-[7.5px] leading-none opacity-70">No data</span>
+                )}
               </button>
             );
           })}
+        </div>
+        <div className="flex items-center justify-center gap-1.5 mt-4 flex-wrap">
+          <span className="text-[10px] text-[#6B7280] mr-1">Loss</span>
+          {['#EF4444', '#FCA5A5', '#FEE2E2'].map(c => <div key={c} className="w-3.5 h-3.5 rounded" style={{ backgroundColor: c }} />)}
+          <div className="w-3.5 h-3.5 rounded bg-[#1A1B1F] mx-1" />
+          {['#DCFCE7', '#86EFAC', '#22C55E'].map(c => <div key={c} className="w-3.5 h-3.5 rounded" style={{ backgroundColor: c }} />)}
+          <span className="text-[10px] text-[#6B7280] ml-1">Profit</span>
         </div>
       </div>
 
@@ -473,7 +505,7 @@ export default function App() {
   const titles = {
     dashboard: ['Dashboard', 'Your Trading Overview'],
     trades: ['Trades', 'Log & Manage Trades'],
-    calendar: ['Calendar', 'Coming soon'],
+    calendar: ['Calendar', 'Your Trading Calendar'],
     stats: ['Statistics', 'Coming soon'],
     journal: ['Journal', 'Coming soon'],
   };
