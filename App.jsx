@@ -307,7 +307,7 @@ function TradeForm({ initial, onSave, saveLabel }) {
             </div>
           ) : (
             <label className="w-full bg-[#1A1B1F] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-5 text-center block cursor-pointer">
-              <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" disabled={uploadingShot} />
+              <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" disabled={uploadingShot} />
               <p className="text-xs text-[#9CA3AF]">{uploadingShot ? 'Uploading...' : 'Tap to take a photo or choose from gallery'}</p>
             </label>
           )}
