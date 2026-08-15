@@ -205,6 +205,7 @@ function TradeForm({ initial, onSave, saveLabel }) {
   const [localError, setLocalError] = useState('');
   const [uploadingShot, setUploadingShot] = useState(false);
   const [shotError, setShotError] = useState('');
+  const [zoomedImage, setZoomedImage] = useState(false);
   const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target ? e.target.value : e }));
 
   async function handleFileChange(e) {
@@ -302,8 +303,9 @@ function TradeForm({ initial, onSave, saveLabel }) {
         <Field label="Screenshot">
           {form.screenshotUrl ? (
             <div className="relative">
-              <img src={form.screenshotUrl} alt="Trade screenshot" className="w-full max-h-56 object-cover rounded-xl border border-white/[0.08]" />
+              <img src={form.screenshotUrl} alt="Trade screenshot" onClick={() => setZoomedImage(true)} className="w-full max-h-56 object-cover rounded-xl border border-white/[0.08] cursor-pointer" />
               <button type="button" onClick={() => setForm(f => ({ ...f, screenshotUrl: null }))} className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2.5 py-1 rounded-lg">Remove</button>
+              <p className="text-[10px] text-[#6B7280] mt-1.5 text-center">Tap image to view full size</p>
             </div>
           ) : (
             <label className="w-full bg-[#1A1B1F] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-5 text-center block cursor-pointer">
@@ -314,6 +316,12 @@ function TradeForm({ initial, onSave, saveLabel }) {
           {shotError && <p className="text-[11px] text-[#EF4444] mt-1.5">{shotError}</p>}
         </Field>
       </div>
+      {zoomedImage && form.screenshotUrl && (
+        <div onClick={() => setZoomedImage(false)} className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4" style={{ position: 'fixed' }}>
+          <img src={form.screenshotUrl} alt="Trade screenshot full size" className="max-w-full max-h-full object-contain rounded-lg" />
+          <button onClick={() => setZoomedImage(false)} className="absolute top-6 right-6 bg-white/10 text-white w-9 h-9 rounded-full flex items-center justify-center text-lg">✕</button>
+        </div>
+      )}
       <button onClick={handleSave} disabled={!canSave || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${canSave ? 'bg-[#22C55E] text-black' : 'bg-[#1A1B1F] text-[#4B5563] border border-white/[0.06]'}`}>
         {savedMsg ? <><Check size={16} /> Saved to database</> : saving ? 'Saving...' : saveLabel}
       </button>
