@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle } from 'lucide-react';
+import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
 
 // ===== SUPABASE CONNECTION =====
@@ -13,6 +13,7 @@ function toDb(t) {
     entry_price: t.entry, exit_price: t.exit, stop_loss: t.stopLoss, quantity: t.positionSize,
     risk_amount: t.risk, pnl: t.pnl, rr: t.rMultiple, strategy: t.strategy, setup_type: t.setup,
     emotion: t.emotion, mistake_tags: t.mistake, confidence: t.confidence, notes: t.notes,
+    screenshot_url: t.screenshotUrl || null,
   };
 }
 function fromDb(row) {
@@ -21,7 +22,19 @@ function fromDb(row) {
     entry: row.entry_price, exit: row.exit_price, stopLoss: row.stop_loss, positionSize: row.quantity,
     risk: row.risk_amount, pnl: row.pnl, rMultiple: row.rr, strategy: row.strategy, setup: row.setup_type,
     emotion: row.emotion, mistake: row.mistake_tags, confidence: row.confidence, notes: row.notes,
+    screenshotUrl: row.screenshot_url,
   };
+}
+async function uploadScreenshot(file) {
+  const ext = file.name.split('.').pop() || 'jpg';
+  const path = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/trade-screenshots/${path}`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': file.type },
+    body: file,
+  });
+  if (!res.ok) throw new Error(`Screenshot upload failed (${res.status}): ${await res.text()}`);
+  return `${SUPABASE_URL}/storage/v1/object/public/trade-screenshots/${path}`;
 }
 
 async function apiGet() {
@@ -185,12 +198,31 @@ function DashboardView({ trades, loading }) {
 
 function TradeForm({ initial, onSave, saveLabel }) {
   const today = new Date().toISOString().slice(0, 10);
-  const base = { date: today, market: 'Forex', symbol: '', direction: 'long', entry: '', exit: '', stopLoss: '', positionSize: '', strategy: '', setup: '', emotion: 'Calm', mistake: 'None', confidence: 3, notes: '' };
+  const base = { date: today, market: 'Forex', symbol: '', direction: 'long', entry: '', exit: '', stopLoss: '', positionSize: '', strategy: '', setup: '', emotion: 'Calm', mistake: 'None', confidence: 3, notes: '', screenshotUrl: null };
   const [form, setForm] = useState({ ...base, ...initial });
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
   const [localError, setLocalError] = useState('');
+  const [uploadingShot, setUploadingShot] = useState(false);
+  const [shotError, setShotError] = useState('');
   const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target ? e.target.value : e }));
+
+  async function handleFileChange(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setUploadingShot(true);
+    setShotError('');
+    try {
+      const url = await withRetry(() => uploadScreenshot(file));
+      setForm(f => ({ ...f, screenshotUrl: url }));
+    } catch (err) {
+      console.error('[Screenshot] upload failed:', err);
+      setShotError(err.message || 'Upload failed. Please retry.');
+    } finally {
+      setUploadingShot(false);
+      e.target.value = '';
+    }
+  }
 
   const entryN = parseFloat(form.entry), exitN = parseFloat(form.exit), stopN = parseFloat(form.stopLoss), qtyN = parseFloat(form.positionSize);
   const hasNumbers = !isNaN(entryN) && !isNaN(exitN) && !isNaN(stopN) && !isNaN(qtyN) && qtyN > 0;
@@ -267,7 +299,20 @@ function TradeForm({ initial, onSave, saveLabel }) {
       </div>
       <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
         <Field label="Notes"><textarea rows={3} placeholder="What happened? What did you see?" value={form.notes} onChange={set('notes')} className={inputCls} /></Field>
-        <Field label="Screenshot"><div className="w-full bg-[#1A1B1F] border border-dashed border-white/[0.1] rounded-xl px-3.5 py-4 text-center"><p className="text-xs text-[#4B5563]">Coming in a later step</p></div></Field>
+        <Field label="Screenshot">
+          {form.screenshotUrl ? (
+            <div className="relative">
+              <img src={form.screenshotUrl} alt="Trade screenshot" className="w-full max-h-56 object-cover rounded-xl border border-white/[0.08]" />
+              <button type="button" onClick={() => setForm(f => ({ ...f, screenshotUrl: null }))} className="absolute top-2 right-2 bg-black/70 text-white text-xs px-2.5 py-1 rounded-lg">Remove</button>
+            </div>
+          ) : (
+            <label className="w-full bg-[#1A1B1F] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-5 text-center block cursor-pointer">
+              <input type="file" accept="image/*" capture="environment" onChange={handleFileChange} className="hidden" disabled={uploadingShot} />
+              <p className="text-xs text-[#9CA3AF]">{uploadingShot ? 'Uploading...' : 'Tap to take a photo or choose from gallery'}</p>
+            </label>
+          )}
+          {shotError && <p className="text-[11px] text-[#EF4444] mt-1.5">{shotError}</p>}
+        </Field>
       </div>
       <button onClick={handleSave} disabled={!canSave || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${canSave ? 'bg-[#22C55E] text-black' : 'bg-[#1A1B1F] text-[#4B5563] border border-white/[0.06]'}`}>
         {savedMsg ? <><Check size={16} /> Saved to database</> : saving ? 'Saving...' : saveLabel}
@@ -313,7 +358,7 @@ function LedgerView({ trades, onEdit }) {
         <div className="space-y-2">
           {list.map(t => (
             <button key={t.id} onClick={() => onEdit(t)} className="w-full text-left rounded-xl bg-[#141519] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#1A1B1F] transition-colors">
-              <div><p className="text-sm font-medium">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'} · {t.market}</span></p><p className="text-[11px] text-[#6B7280]">{t.date}</p></div>
+              <div><p className="text-sm font-medium flex items-center gap-1.5">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'} · {t.market}</span>{t.screenshotUrl && <Camera size={12} className="text-[#6B7280] shrink-0" />}</p><p className="text-[11px] text-[#6B7280]">{t.date}</p></div>
               <div className="text-right"><p className="text-sm font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p><p className="text-[11px] text-[#6B7280]">{Number(t.rMultiple).toFixed(2)}R</p></div>
             </button>
           ))}
