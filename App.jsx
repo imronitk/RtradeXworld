@@ -664,13 +664,107 @@ function StrategyManager({ trades, onClose }) {
   );
 }
 
+function PsychologyView({ trades, onClose }) {
+  const [journalEntries, setJournalEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try { setJournalEntries(await apiJournalList()); }
+      catch (e) { console.error('[Psychology] journal load failed:', e); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  function groupBy(keyFn) {
+    const map = {};
+    trades.forEach(t => {
+      const k = keyFn(t);
+      if (!k) return;
+      if (!map[k]) map[k] = { key: k, pnl: 0, count: 0, wins: 0 };
+      map[k].pnl += Number(t.pnl) || 0;
+      map[k].count += 1;
+      if (Number(t.pnl) > 0) map[k].wins += 1;
+    });
+    return Object.values(map).sort((a, b) => b.count - a.count);
+  }
+
+  const byEmotion = groupBy(t => t.emotion);
+  const mistakesOnly = trades.filter(t => t.mistake && t.mistake !== 'None');
+  const byMistake = groupBy(t => t.mistake).filter(g => g.key !== 'None').sort((a, b) => a.pnl - b.pnl);
+  const byConfidence = groupBy(t => t.confidence ? `${t.confidence} Star${t.confidence > 1 ? 's' : ''}` : null);
+
+  const disciplineScore = trades.length > 0 ? Math.round(((trades.length - mistakesOnly.length) / trades.length) * 100) : 0;
+
+  const worstEmotion = [...byEmotion].sort((a, b) => a.pnl - b.pnl)[0];
+  const costliestMistake = byMistake[0];
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Discipline Score" value={`${disciplineScore}%`} positive={disciplineScore >= 70} negative={disciplineScore < 50} icon={Target} sub={`${mistakesOnly.length} flagged trade${mistakesOnly.length !== 1 ? 's' : ''}`} />
+        <StatCard label="Total Trades" value={trades.length} icon={NotebookPen} />
+      </div>
+
+      {(worstEmotion || costliestMistake) && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4 space-y-2">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Quick Insights</p>
+          {worstEmotion && worstEmotion.pnl < 0 && (
+            <p className="text-sm text-[#E8E9EC]">You lose the most when trading <span className="font-semibold text-[#EF4444]">{worstEmotion.key}</span> — {fmtMoney(worstEmotion.pnl)} across {worstEmotion.count} trade{worstEmotion.count !== 1 ? 's' : ''}.</p>
+          )}
+          {costliestMistake && costliestMistake.pnl < 0 && (
+            <p className="text-sm text-[#E8E9EC]">Your costliest mistake is <span className="font-semibold text-[#EF4444]">{costliestMistake.key}</span> — {fmtMoney(costliestMistake.pnl)} total.</p>
+          )}
+          {!(worstEmotion && worstEmotion.pnl < 0) && !(costliestMistake && costliestMistake.pnl < 0) && (
+            <p className="text-sm text-[#6B7280]">No clear costly patterns yet — keep logging to build a bigger picture.</p>
+          )}
+        </div>
+      )}
+
+      <GroupTable title="By Emotion" groups={byEmotion} icon={Activity} />
+      <GroupTable title="By Mistake" groups={byMistake} icon={AlertCircle} />
+      <GroupTable title="By Confidence Level" groups={byConfidence} icon={Star} />
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+        <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Recent Mood (from Journal)</p>
+        {loading ? (
+          <p className="text-sm text-[#6B7280]">Loading...</p>
+        ) : journalEntries.length === 0 ? (
+          <p className="text-sm text-[#6B7280]">No journal entries yet — log a daily entry in the Journal tab to track mood over time.</p>
+        ) : (
+          <div className="space-y-2">
+            {journalEntries.slice(0, 8).map(e => (
+              <div key={e.id} className="flex items-center justify-between">
+                <p className="text-sm">{e.date}</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-[#9CA3AF]">{e.mood}</span>
+                  <div className="flex gap-0.5">
+                    {[1, 2, 3, 4, 5].map(n => <Star key={n} size={11} className={n <= (e.confidence || 0) ? 'fill-[#22C55E] text-[#22C55E]' : 'text-[#3A3B40]'} />)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function StatsView({ trades }) {
   const [showManager, setShowManager] = useState(false);
+  const [showPsych, setShowPsych] = useState(false);
   if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
+  if (showPsych) return <PsychologyView trades={trades} onClose={() => setShowPsych(false)} />;
   if (trades.length === 0) {
     return (
       <>
-        <button onClick={() => setShowManager(true)} className="w-full py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Manage Strategies</button>
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Strategies</button>
+          <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Activity size={14} /> Psychology</button>
+        </div>
         <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
           <p className="text-[13px] text-[#6B7280] leading-relaxed">Log some trades and this screen will break down your edge — by strategy, by market, and over time.</p>
@@ -724,7 +818,10 @@ function StatsView({ trades }) {
 
   return (
     <>
-      <button onClick={() => setShowManager(true)} className="w-full py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Manage Strategies</button>
+      <div className="grid grid-cols-2 gap-2">
+        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Strategies</button>
+        <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Activity size={14} /> Psychology</button>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
         <StatCard label="Profit Factor" value={profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)} icon={Activity} positive={profitFactor > 1} negative={profitFactor < 1 && profitFactor !== Infinity} />
