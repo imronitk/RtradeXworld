@@ -94,6 +94,37 @@ async function apiJournalUpsert(entry) {
   return journalFromDb(data[0]);
 }
 
+// ===== STRATEGY API =====
+function strategyToDb(s) {
+  return { name: s.name, description: s.description, rules: s.rules, checklist: s.checklist, expected_rr: s.expectedRR === '' ? null : s.expectedRR };
+}
+function strategyFromDb(row) {
+  return { id: row.id, name: row.name, description: row.description, rules: row.rules, checklist: row.checklist, expectedRR: row.expected_rr };
+}
+async function apiStrategyList() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/strategies?select=*&order=name.asc`, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Strategy read failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).map(strategyFromDb);
+}
+async function apiStrategyCreate(s) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/strategies`, {
+    method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(strategyToDb(s)),
+  });
+  if (!res.ok) throw new Error(`Strategy save failed (${res.status}): ${await res.text()}`);
+  return strategyFromDb((await res.json())[0]);
+}
+async function apiStrategyUpdate(id, s) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/strategies?id=eq.${id}`, {
+    method: 'PATCH', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(strategyToDb(s)),
+  });
+  if (!res.ok) throw new Error(`Strategy update failed (${res.status}): ${await res.text()}`);
+  return strategyFromDb((await res.json())[0]);
+}
+async function apiStrategyDelete(id) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/strategies?id=eq.${id}`, { method: 'DELETE', headers: HEADERS });
+  if (!res.ok) throw new Error(`Strategy delete failed (${res.status}): ${await res.text()}`);
+}
+
 async function withRetry(fn, attempts = 2) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
@@ -522,13 +553,129 @@ function GroupTable({ title, groups, icon: Icon }) {
   );
 }
 
+function StrategyManager({ trades, onClose }) {
+  const [strategies, setStrategies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [subview, setSubview] = useState('list'); // list | add
+  const [editing, setEditing] = useState(null);
+  const emptyForm = { name: '', description: '', rules: '', checklist: '', expectedRR: '' };
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { setStrategies(await apiStrategyList()); }
+      catch (e) { setError(e.message); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  function statsFor(name) {
+    const matched = trades.filter(t => (t.strategy || '').trim().toLowerCase() === name.trim().toLowerCase());
+    const pnl = matched.reduce((a, t) => a + (Number(t.pnl) || 0), 0);
+    const wins = matched.filter(t => Number(t.pnl) > 0).length;
+    const avgR = matched.length > 0 ? matched.reduce((a, t) => a + (Number(t.rMultiple) || 0), 0) / matched.length : 0;
+    return { count: matched.length, pnl, winRate: matched.length > 0 ? (wins / matched.length) * 100 : 0, avgR };
+  }
+
+  function startEdit(s) { setEditing(s); setForm({ name: s.name, description: s.description || '', rules: s.rules || '', checklist: s.checklist || '', expectedRR: s.expectedRR ?? '' }); setSubview('add'); }
+  function startNew() { setEditing(null); setForm(emptyForm); setSubview('add'); }
+
+  async function handleSave() {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      if (editing) {
+        const updated = await withRetry(() => apiStrategyUpdate(editing.id, form));
+        setStrategies(prev => prev.map(s => s.id === updated.id ? updated : s));
+      } else {
+        const created = await withRetry(() => apiStrategyCreate(form));
+        setStrategies(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+      setSubview('list');
+      setEditing(null);
+    } catch (e) {
+      setError(e.message || 'Could not save strategy.');
+    } finally { setSaving(false); }
+  }
+
+  async function handleDelete() {
+    if (!editing || !window.confirm(`Delete "${editing.name}"? This won't delete any trades, just this strategy record.`)) return;
+    try {
+      await apiStrategyDelete(editing.id);
+      setStrategies(prev => prev.filter(s => s.id !== editing.id));
+      setSubview('list');
+      setEditing(null);
+    } catch (e) {
+      setError(e.message || 'Could not delete strategy.');
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+        {subview === 'list' && <button onClick={startNew} className="text-xs font-medium text-[#22C55E]">+ New Strategy</button>}
+      </div>
+
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
+
+      {subview === 'add' ? (
+        <>
+          <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
+            <Field label="Name"><input type="text" placeholder="e.g. Trend Pullback" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={inputCls} /></Field>
+            <Field label="Description"><textarea rows={2} placeholder="One-line summary of this setup" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className={inputCls} /></Field>
+            <Field label="Expected RR"><input inputMode="decimal" type="number" placeholder="e.g. 2.5" value={form.expectedRR} onChange={e => setForm(f => ({ ...f, expectedRR: e.target.value }))} className={inputCls} /></Field>
+            <Field label="Rules"><textarea rows={4} placeholder="One rule per line" value={form.rules} onChange={e => setForm(f => ({ ...f, rules: e.target.value }))} className={inputCls} /></Field>
+            <Field label="Checklist"><textarea rows={4} placeholder="One checklist item per line" value={form.checklist} onChange={e => setForm(f => ({ ...f, checklist: e.target.value }))} className={inputCls} /></Field>
+          </div>
+          <button onClick={handleSave} disabled={!form.name.trim() || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold ${form.name.trim() ? 'bg-[#22C55E] text-black' : 'bg-[#1A1B1F] text-[#4B5563] border border-white/[0.06]'}`}>
+            {saving ? 'Saving...' : editing ? 'Update Strategy' : 'Save Strategy'}
+          </button>
+          {editing && <button onClick={handleDelete} className="w-full py-3 rounded-xl text-sm font-medium text-[#EF4444] flex items-center justify-center gap-1.5"><Trash2 size={14} /> Delete Strategy</button>}
+        </>
+      ) : loading ? (
+        <p className="text-sm text-[#6B7280] text-center py-8">Loading...</p>
+      ) : strategies.length === 0 ? (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
+          <p className="text-sm font-medium mb-1">No strategies saved yet</p>
+          <p className="text-[13px] text-[#6B7280]">Save your setups here with rules and a checklist, and this screen will track real performance for each one automatically.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {strategies.map(s => {
+            const st = statsFor(s.name);
+            return (
+              <button key={s.id} onClick={() => startEdit(s)} className="w-full text-left rounded-2xl bg-[#141519] border border-white/[0.06] p-4 active:bg-[#1A1B1F]">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="text-sm font-semibold">{s.name}</p>
+                  <p className="text-sm font-semibold" style={{ color: st.pnl > 0 ? '#22C55E' : st.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{st.pnl > 0 ? '+' : ''}{st.pnl.toFixed(2)}</p>
+                </div>
+                {s.description && <p className="text-[12px] text-[#6B7280] mb-2">{s.description}</p>}
+                <p className="text-[11px] text-[#6B7280]">{st.count} trade{st.count !== 1 ? 's' : ''} · {st.winRate.toFixed(0)}% win · {st.avgR.toFixed(2)}R avg{s.expectedRR ? ` · target ${s.expectedRR}R` : ''}</p>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+}
+
 function StatsView({ trades }) {
+  const [showManager, setShowManager] = useState(false);
+  if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
   if (trades.length === 0) {
     return (
-      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
-        <p className="text-sm font-medium mb-1">No trades yet</p>
-        <p className="text-[13px] text-[#6B7280] leading-relaxed">Log some trades and this screen will break down your edge — by strategy, by market, and over time.</p>
-      </div>
+      <>
+        <button onClick={() => setShowManager(true)} className="w-full py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Manage Strategies</button>
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
+          <p className="text-sm font-medium mb-1">No trades yet</p>
+          <p className="text-[13px] text-[#6B7280] leading-relaxed">Log some trades and this screen will break down your edge — by strategy, by market, and over time.</p>
+        </div>
+      </>
     );
   }
 
@@ -577,6 +724,7 @@ function StatsView({ trades }) {
 
   return (
     <>
+      <button onClick={() => setShowManager(true)} className="w-full py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Manage Strategies</button>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
         <StatCard label="Profit Factor" value={profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)} icon={Activity} positive={profitFactor > 1} negative={profitFactor < 1 && profitFactor !== Infinity} />
