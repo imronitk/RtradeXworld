@@ -1100,6 +1100,19 @@ function buildStatsContext(trades, topic) {
   return lines.join('\n');
 }
 
+function renderFormatted(text) {
+  return text.split('\n').map((line, li) => (
+    <React.Fragment key={li}>
+      {li > 0 && <br />}
+      {line.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+        part.startsWith('**') && part.endsWith('**')
+          ? <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+          : <React.Fragment key={i}>{part}</React.Fragment>
+      )}
+    </React.Fragment>
+  ));
+}
+
 function AIMentorView({ trades, onClose }) {
   const [topic, setTopic] = useState('General');
   const [messages, setMessages] = useState([]);
@@ -1168,7 +1181,7 @@ function AIMentorView({ trades, onClose }) {
         )}
         {messages.map((m, i) => (
           <div key={i} className={`rounded-2xl p-4 max-w-[88%] ${m.role === 'user' ? 'bg-[#22C55E]/15 ml-auto' : 'bg-[#141519] border border-white/[0.06]'}`}>
-            <p className="text-sm leading-relaxed whitespace-pre-wrap">{m.content}</p>
+            <p className="text-sm leading-relaxed">{renderFormatted(m.content)}</p>
           </div>
         ))}
         {sending && <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4 max-w-[88%]"><p className="text-sm text-[#6B7280]">Thinking...</p></div>}
