@@ -753,17 +753,394 @@ function PsychologyView({ trades, onClose }) {
   );
 }
 
+function generateInsights(trades) {
+  const insights = [];
+  const fmt = fmtMoney;
+
+  const dowNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dowMap = {};
+  trades.forEach(t => {
+    if (!t.date) return;
+    const d = new Date(t.date).getDay();
+    if (!dowMap[d]) dowMap[d] = { day: dowNames[d], pnl: 0, count: 0 };
+    dowMap[d].pnl += Number(t.pnl) || 0;
+    dowMap[d].count += 1;
+  });
+  const dowArr = Object.values(dowMap);
+  if (dowArr.length >= 2) {
+    const best = [...dowArr].sort((a, b) => b.pnl - a.pnl)[0];
+    const worst = [...dowArr].sort((a, b) => a.pnl - b.pnl)[0];
+    if (best.pnl > 0) insights.push({ icon: TrendingUp, positive: true, text: `You perform best on ${best.day}s — ${fmt(best.pnl)} across ${best.count} trade${best.count !== 1 ? 's' : ''}.` });
+    if (worst.pnl < 0 && worst.day !== best.day) insights.push({ icon: TrendingDown, positive: false, text: `${worst.day}s have been your worst day — ${fmt(worst.pnl)} total. Consider sitting out or sizing down.` });
+  }
+
+  const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+  const afterLoss = [], afterWin = [];
+  for (let i = 1; i < chronological.length; i++) {
+    (Number(chronological[i - 1].pnl) > 0 ? afterWin : afterLoss).push(chronological[i]);
+  }
+  const avg = (arr) => arr.length ? arr.reduce((a, t) => a + (Number(t.pnl) || 0), 0) / arr.length : null;
+  const avgAfterLoss = avg(afterLoss), avgAfterWin = avg(afterWin);
+  if (avgAfterLoss !== null && avgAfterWin !== null && avgAfterLoss < avgAfterWin - Math.abs(avgAfterWin) * 0.3) {
+    insights.push({ icon: AlertCircle, positive: false, text: `Your results drop after a loss (avg ${fmt(avgAfterLoss)}/trade) versus after a win (avg ${fmt(avgAfterWin)}/trade) — a possible sign of revenge trading.` });
+  }
+
+  const longs = trades.filter(t => t.direction === 'long'), shorts = trades.filter(t => t.direction === 'short');
+  if (longs.length >= 3 && shorts.length >= 3) {
+    const longWR = (longs.filter(t => Number(t.pnl) > 0).length / longs.length) * 100;
+    const shortWR = (shorts.filter(t => Number(t.pnl) > 0).length / shorts.length) * 100;
+    if (Math.abs(longWR - shortWR) > 15) {
+      const betterIsLong = longWR > shortWR;
+      insights.push({ icon: Target, positive: true, text: `You're noticeably stronger trading ${betterIsLong ? 'Long' : 'Short'} (${Math.round(betterIsLong ? longWR : shortWR)}% win rate) than ${betterIsLong ? 'Short' : 'Long'} (${Math.round(betterIsLong ? shortWR : longWR)}% win rate).` });
+    }
+  }
+
+  const byDate = {};
+  trades.forEach(t => {
+    if (!t.date) return;
+    if (!byDate[t.date]) byDate[t.date] = { pnl: 0, count: 0 };
+    byDate[t.date].pnl += Number(t.pnl) || 0;
+    byDate[t.date].count += 1;
+  });
+  const heavyDays = Object.values(byDate).filter(d => d.count >= 3);
+  const lightDays = Object.values(byDate).filter(d => d.count === 1);
+  if (heavyDays.length >= 2 && lightDays.length >= 2) {
+    const heavyAvg = heavyDays.reduce((a, d) => a + d.pnl, 0) / heavyDays.reduce((a, d) => a + d.count, 0);
+    const lightAvg = lightDays.reduce((a, d) => a + d.pnl, 0) / lightDays.reduce((a, d) => a + d.count, 0);
+    if (heavyAvg < lightAvg - Math.abs(lightAvg) * 0.3) {
+      insights.push({ icon: AlertCircle, positive: false, text: `On days you take 3+ trades, your average result per trade (${fmt(heavyAvg)}) is worse than on single-trade days (${fmt(lightAvg)}) — a possible overtrading pattern.` });
+    }
+  }
+
+  const emoMap = {};
+  trades.forEach(t => {
+    if (!t.emotion) return;
+    if (!emoMap[t.emotion]) emoMap[t.emotion] = { key: t.emotion, pnl: 0, count: 0 };
+    emoMap[t.emotion].pnl += Number(t.pnl) || 0;
+    emoMap[t.emotion].count += 1;
+  });
+  const emoArr = Object.values(emoMap).filter(e => e.count >= 2);
+  if (emoArr.length > 0) {
+    const worstEmo = [...emoArr].sort((a, b) => a.pnl - b.pnl)[0];
+    if (worstEmo.pnl < 0) insights.push({ icon: AlertCircle, positive: false, text: `Most losing trades happen when you're feeling "${worstEmo.key}" — ${fmt(worstEmo.pnl)} across ${worstEmo.count} trades.` });
+  }
+
+  return insights;
+}
+
+function confidenceLabel(n) {
+  if (n < 6) return { label: 'Insufficient data', color: '#6B7280' };
+  if (n < 20) return { label: 'Early observation', color: '#F59E0B' };
+  if (n < 50) return { label: 'Moderate evidence', color: '#EAB308' };
+  if (n < 100) return { label: 'Strengthening evidence', color: '#84CC16' };
+  return { label: 'Strong historical evidence', color: '#22C55E' };
+}
+
+function EvidenceBlock({ title, children }) {
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">{title}</p>
+      <div className="text-sm text-[#E8E9EC] leading-relaxed">{children}</div>
+    </div>
+  );
+}
+
+function WhyLosingView({ trades }) {
+  const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+  const factors = [];
+
+  const afterLoss = [];
+  for (let i = 1; i < chronological.length; i++) if (Number(chronological[i - 1].pnl) <= 0) afterLoss.push(chronological[i]);
+  if (afterLoss.length >= 3) {
+    const pnl = afterLoss.reduce((a, t) => a + Number(t.pnl), 0);
+    const wins = afterLoss.filter(t => Number(t.pnl) > 0).length;
+    if (pnl < 0) factors.push({ name: 'Trading Right After a Loss', count: afterLoss.length, pnl, winRate: (wins / afterLoss.length) * 100 });
+  }
+
+  const byDate = {};
+  trades.forEach(t => { if (!t.date) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
+  const overtradeTrades = Object.values(byDate).filter(list => list.length >= 3).flat();
+  if (overtradeTrades.length >= 3) {
+    const pnl = overtradeTrades.reduce((a, t) => a + Number(t.pnl), 0);
+    const wins = overtradeTrades.filter(t => Number(t.pnl) > 0).length;
+    if (pnl < 0) factors.push({ name: 'Overtrading (3+ trades/day)', count: overtradeTrades.length, pnl, winRate: (wins / overtradeTrades.length) * 100 });
+  }
+
+  const mistakeTrades = trades.filter(t => t.mistake && t.mistake !== 'None');
+  const byMistakeName = {};
+  mistakeTrades.forEach(t => { (byMistakeName[t.mistake] = byMistakeName[t.mistake] || []).push(t); });
+  Object.entries(byMistakeName).forEach(([name, list]) => {
+    if (list.length < 2) return;
+    const pnl = list.reduce((a, t) => a + Number(t.pnl), 0);
+    const wins = list.filter(t => Number(t.pnl) > 0).length;
+    if (pnl < 0) factors.push({ name, count: list.length, pnl, winRate: (wins / list.length) * 100 });
+  });
+
+  factors.sort((a, b) => a.pnl - b.pnl);
+  const totalLoss = trades.filter(t => Number(t.pnl) < 0).reduce((a, t) => a + Number(t.pnl), 0);
+  const top = factors[0];
+
+  if (!top) {
+    return <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">No clear, data-backed cause stands out yet. That's a good sign — or it just means we need more trades to be sure.</p></div>;
+  }
+  const pctOfLosses = totalLoss < 0 ? Math.round((top.pnl / totalLoss) * 100) : 0;
+  const conf = confidenceLabel(top.count);
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-[#EF4444] mb-1">Your Biggest Performance Leak</p>
+          <p className="text-lg font-semibold">{top.name}</p>
+        </div>
+        <EvidenceBlock title="Evidence">
+          {top.count} trades · {fmtMoney(top.pnl)} net · {top.winRate.toFixed(0)}% win rate{pctOfLosses > 0 ? ` · roughly ${pctOfLosses}% of your total losses` : ''}
+        </EvidenceBlock>
+        <EvidenceBlock title="Coach's Verdict">Your data suggests this pattern is a bigger drag on results than your core strategy selection right now.</EvidenceBlock>
+        <EvidenceBlock title="Action">For your next 10 trades, specifically watch for this pattern before entering — pause and re-check your plan when it shows up.</EvidenceBlock>
+        <p className="text-[11px]" style={{ color: conf.color }}>{conf.label} ({top.count} trades)</p>
+      </div>
+      {factors.length > 1 && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Other Contributing Factors</p>
+          <div className="space-y-2">
+            {factors.slice(1).map((f, i) => (
+              <div key={i} className="flex items-center justify-between">
+                <p className="text-sm">{f.name}</p>
+                <p className="text-sm font-medium text-[#EF4444]">{fmtMoney(f.pnl)}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImprovingView({ trades }) {
+  const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+  const n = Math.min(20, Math.floor(chronological.length / 2));
+  if (n < 5) {
+    return <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">Not enough trades yet for a fair before/after comparison — log more and check back.</p></div>;
+  }
+  const recent = chronological.slice(-n);
+  const previous = chronological.slice(-2 * n, -n);
+
+  function stats(list) {
+    const pnl = list.reduce((a, t) => a + Number(t.pnl), 0);
+    const wins = list.filter(t => Number(t.pnl) > 0).length;
+    const avgR = list.reduce((a, t) => a + (Number(t.rMultiple) || 0), 0) / list.length;
+    const mistakeRate = (list.filter(t => t.mistake && t.mistake !== 'None').length / list.length) * 100;
+    return { pnl, winRate: (wins / list.length) * 100, avgR, mistakeRate };
+  }
+  const r = stats(recent), p = stats(previous);
+  const pnlBetter = r.pnl > p.pnl;
+  const mistakesBetter = r.mistakeRate < p.mistakeRate;
+
+  let verdict;
+  if (pnlBetter && mistakesBetter) verdict = 'Clear improvement — both your results and your discipline are trending the right way.';
+  else if (!pnlBetter && mistakesBetter) verdict = 'You may be improving despite lower recent P&L — your execution discipline (fewer flagged mistakes) has gotten meaningfully better.';
+  else if (pnlBetter && !mistakesBetter) verdict = 'Recent P&L is up, but flagged mistakes increased — worth watching before assuming this is sustainable.';
+  else verdict = 'Both results and discipline have slipped recently — worth a deliberate reset.';
+
+  const Row = ({ label, prevVal, recVal, higherBetter = true }) => {
+    const better = higherBetter ? recVal > prevVal : recVal < prevVal;
+    return (
+      <div className="flex items-center justify-between py-1.5">
+        <p className="text-sm text-[#9CA3AF]">{label}</p>
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-[#6B7280]">{prevVal}</span>
+          <span className="text-[#4B5563]">→</span>
+          <span className="font-semibold" style={{ color: better ? '#22C55E' : '#EF4444' }}>{recVal}</span>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5">
+        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Last {n} Trades vs Previous {n}</p>
+        <Row label="Net P&L" prevVal={fmtMoney(p.pnl)} recVal={fmtMoney(r.pnl)} />
+        <Row label="Win Rate" prevVal={p.winRate.toFixed(0) + '%'} recVal={r.winRate.toFixed(0) + '%'} />
+        <Row label="Average R" prevVal={p.avgR.toFixed(2) + 'R'} recVal={r.avgR.toFixed(2) + 'R'} />
+        <Row label="Mistake Rate" prevVal={p.mistakeRate.toFixed(0) + '%'} recVal={r.mistakeRate.toFixed(0) + '%'} higherBetter={false} />
+      </div>
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5">
+        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">Coach's Verdict</p>
+        <p className="text-sm leading-relaxed">{verdict}</p>
+      </div>
+    </div>
+  );
+}
+
+function TopMistakesView({ trades }) {
+  const mistakeTrades = trades.filter(t => t.mistake && t.mistake !== 'None');
+  if (mistakeTrades.length === 0) {
+    return <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">No mistakes flagged in your trades yet — either great discipline, or the Mistake field isn't being used consistently.</p></div>;
+  }
+  const totalLoss = Math.abs(trades.filter(t => Number(t.pnl) < 0).reduce((a, t) => a + Number(t.pnl), 0)) || 1;
+  const map = {};
+  mistakeTrades.forEach(t => {
+    if (!map[t.mistake]) map[t.mistake] = { name: t.mistake, count: 0, pnl: 0, rSum: 0 };
+    map[t.mistake].count += 1;
+    map[t.mistake].pnl += Number(t.pnl) || 0;
+    map[t.mistake].rSum += Number(t.rMultiple) || 0;
+  });
+  const list = Object.values(map).sort((a, b) => a.pnl - b.pnl).slice(0, 5);
+
+  function severity(pnl, count) {
+    const pctOfLoss = Math.abs(pnl) / totalLoss;
+    if (pnl >= 0 || count < 2) return { label: 'LOW', color: '#6B7280' };
+    if (pctOfLoss > 0.3 || count >= 8) return { label: 'CRITICAL', color: '#EF4444' };
+    if (pctOfLoss > 0.15 || count >= 4) return { label: 'HIGH', color: '#F59E0B' };
+    return { label: 'MODERATE', color: '#EAB308' };
+  }
+
+  return (
+    <div className="space-y-2">
+      {list.map((m, i) => {
+        const sev = severity(m.pnl, m.count);
+        return (
+          <div key={m.name} className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-sm font-semibold">#{i + 1} {m.name.toUpperCase()}</p>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: sev.color, backgroundColor: sev.color + '22' }}>{sev.label}</span>
+            </div>
+            <p className="text-[13px] text-[#9CA3AF]">{m.count} occurrence{m.count !== 1 ? 's' : ''} · Net impact: <span className="text-[#EF4444] font-medium">{fmtMoney(m.pnl)}</span> · Avg R: {(m.rSum / m.count).toFixed(2)}R</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function EdgeLeakView({ trades }) {
+  const map = {};
+  trades.forEach(t => {
+    const key = `${t.strategy && t.strategy.trim() ? t.strategy.trim() : 'Unspecified'} · ${t.direction === 'long' ? 'Long' : 'Short'} · ${t.market || 'Unspecified'}`;
+    if (!map[key]) map[key] = { key, count: 0, pnl: 0, wins: 0, rSum: 0 };
+    map[key].count += 1;
+    map[key].pnl += Number(t.pnl) || 0;
+    map[key].wins += Number(t.pnl) > 0 ? 1 : 0;
+    map[key].rSum += Number(t.rMultiple) || 0;
+  });
+  const list = Object.values(map).filter(g => g.count >= 2).sort((a, b) => b.pnl - a.pnl);
+  const edge = list[0];
+  const leak = [...list].reverse()[0];
+
+  if (!edge) return <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">Not enough repeated combinations yet — log more trades with consistent strategy names to surface your edge.</p></div>;
+
+  const Card = ({ title, g, positive }) => {
+    if (!g) return null;
+    const conf = confidenceLabel(g.count);
+    return (
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5">
+        <p className="text-[10px] uppercase tracking-wide mb-1" style={{ color: positive ? '#22C55E' : '#EF4444' }}>{title}</p>
+        <p className="text-base font-semibold mb-3">{g.key}</p>
+        <div className="grid grid-cols-3 gap-2">
+          <div><p className="text-[10px] text-[#6B7280]">Trades</p><p className="text-sm font-semibold">{g.count}</p></div>
+          <div><p className="text-[10px] text-[#6B7280]">Win Rate</p><p className="text-sm font-semibold">{((g.wins / g.count) * 100).toFixed(0)}%</p></div>
+          <div><p className="text-[10px] text-[#6B7280]">Avg R</p><p className="text-sm font-semibold">{(g.rSum / g.count).toFixed(2)}R</p></div>
+        </div>
+        <p className="text-sm font-semibold mt-3" style={{ color: positive ? '#22C55E' : '#EF4444' }}>{fmtMoney(g.pnl)} net</p>
+        <p className="text-[11px] mt-1" style={{ color: conf.color }}>{conf.label}</p>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <Card title="Your Edge" g={edge} positive={true} />
+      {leak && leak.key !== edge.key && leak.pnl < 0 && <Card title="Your Leak" g={leak} positive={false} />}
+    </div>
+  );
+}
+
+function CoachView({ trades, onClose }) {
+  const [mode, setMode] = useState('overview');
+  const insights = trades.length >= 5 ? generateInsights(trades) : [];
+  const modes = [
+    { id: 'why', label: 'Why Am I Losing?' },
+    { id: 'improving', label: 'Am I Improving?' },
+    { id: 'mistakes', label: 'Top 5 Mistakes' },
+    { id: 'edge', label: 'Edge vs Leak' },
+  ];
+
+  if (mode !== 'overview') {
+    const activeMode = modes.find(m => m.id === mode);
+    return (
+      <>
+        <button onClick={() => setMode('overview')} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Coach</button>
+        <p className="text-lg font-semibold">{activeMode.label}</p>
+        {mode === 'why' && <WhyLosingView trades={trades} />}
+        {mode === 'improving' && <ImprovingView trades={trades} />}
+        {mode === 'mistakes' && <TopMistakesView trades={trades} />}
+        {mode === 'edge' && <EdgeLeakView trades={trades} />}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+      <div className="rounded-2xl bg-gradient-to-br from-[#141519] to-[#0F1012] border border-white/[0.06] p-5">
+        <div className="flex items-center gap-2 mb-1">
+          <div className="w-7 h-7 rounded-full bg-[#22C55E]/15 flex items-center justify-center"><Flame size={14} className="text-[#22C55E]" /></div>
+          <p className="text-sm font-semibold">Trading Coach</p>
+        </div>
+        <p className="text-[12px] text-[#6B7280]">A trading intelligence engine built entirely from your own journal data — no predictions, no guesswork.</p>
+      </div>
+
+      {trades.length < 5 ? (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
+          <p className="text-sm font-medium mb-1">Not enough data yet</p>
+          <p className="text-[13px] text-[#6B7280]">Log at least 5 trades and the Coach will start finding real patterns in how you trade.</p>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            {modes.map(m => (
+              <button key={m.id} onClick={() => setMode(m.id)} className="py-3.5 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#E8E9EC] text-left px-3.5">{m.label}</button>
+            ))}
+          </div>
+
+          {insights.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mt-2">Quick Insights</p>
+              {insights.map((ins, i) => {
+                const Icon = ins.icon;
+                return (
+                  <div key={i} className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4 flex items-start gap-3">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${ins.positive ? 'bg-[#22C55E]/15' : 'bg-[#EF4444]/15'}`}>
+                      <Icon size={14} className={ins.positive ? 'text-[#22C55E]' : 'text-[#EF4444]'} />
+                    </div>
+                    <p className="text-sm text-[#E8E9EC] leading-relaxed">{ins.text}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 function StatsView({ trades }) {
   const [showManager, setShowManager] = useState(false);
   const [showPsych, setShowPsych] = useState(false);
+  const [showCoach, setShowCoach] = useState(false);
   if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
   if (showPsych) return <PsychologyView trades={trades} onClose={() => setShowPsych(false)} />;
+  if (showCoach) return <CoachView trades={trades} onClose={() => setShowCoach(false)} />;
   if (trades.length === 0) {
     return (
       <>
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Strategies</button>
-          <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Activity size={14} /> Psychology</button>
+        <div className="grid grid-cols-3 gap-2">
+          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
+          <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
+          <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
         </div>
         <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
@@ -818,9 +1195,10 @@ function StatsView({ trades }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-2">
-        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Target size={14} /> Strategies</button>
-        <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-sm font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex items-center justify-center gap-1.5"><Activity size={14} /> Psychology</button>
+      <div className="grid grid-cols-3 gap-2">
+        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
+        <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
+        <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
