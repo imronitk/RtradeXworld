@@ -1057,6 +1057,140 @@ function EdgeLeakView({ trades }) {
   );
 }
 
+const MENTOR_SYSTEM_PROMPT = `You are RTrade AI Mentor, a professional trading performance mentor.
+Your purpose is to help the trader understand their own decisions, behavior, risk management, execution and statistical edge.
+You are not a signal seller. You do not predict the future. You do not guarantee profits.
+You do not encourage revenge trading, martingale behavior, or increasing risk to recover losses.
+You challenge weak reasoning respectfully. You distinguish trade outcome from decision quality.
+You use the trader's actual journal evidence provided below whenever available, and never invent statistics or claim data you weren't given.
+When evidence is insufficient, say so plainly.
+You act like a calm, experienced trading mentor: identify the most important issue first, explain why it matters, and give one practical next step.
+Ask a smart follow-up question when it would help more than a big answer. Keep responses concise and conversational, not a wall of text.`;
+
+const MENTOR_TOPICS = ['General', 'Psychology', 'Risk', 'Strategy'];
+
+function buildStatsContext(trades, topic) {
+  if (trades.length === 0) return 'TRADING_STATISTICS:\nNo trades logged yet.';
+  const pnl = trades.reduce((a, t) => a + Number(t.pnl), 0);
+  const wins = trades.filter(t => Number(t.pnl) > 0).length;
+  const winRate = (wins / trades.length) * 100;
+  const avgR = trades.reduce((a, t) => a + (Number(t.rMultiple) || 0), 0) / trades.length;
+  let lines = [`TRADING_STATISTICS:`, `Total trades: ${trades.length}`, `Net P&L: ${fmtMoney(pnl)}`, `Win rate: ${winRate.toFixed(0)}%`, `Average R: ${avgR.toFixed(2)}R`];
+
+  if (topic === 'Psychology') {
+    const emo = {};
+    trades.forEach(t => { if (!t.emotion) return; (emo[t.emotion] = emo[t.emotion] || { c: 0, p: 0 }).c++; emo[t.emotion].p += Number(t.pnl); });
+    lines.push('PSYCHOLOGY:');
+    Object.entries(emo).forEach(([k, v]) => lines.push(`${k}: ${v.c} trades, ${fmtMoney(v.p)} net`));
+    const mistakes = trades.filter(t => t.mistake && t.mistake !== 'None');
+    lines.push(`Trades with a flagged mistake: ${mistakes.length} of ${trades.length}`);
+  } else if (topic === 'Risk') {
+    const risks = trades.filter(t => t.risk).map(t => Number(t.risk));
+    if (risks.length) lines.push(`RISK:`, `Average risk per trade: ${(risks.reduce((a, b) => a + b, 0) / risks.length).toFixed(2)}`);
+    const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
+    let peak = -Infinity, running = 0, maxDD = 0;
+    chronological.forEach(t => { running += Number(t.pnl); peak = Math.max(peak, running); maxDD = Math.max(maxDD, peak - running); });
+    lines.push(`Max drawdown: ${fmtMoney(-maxDD)}`);
+  } else if (topic === 'Strategy') {
+    const strat = {};
+    trades.forEach(t => { const k = t.strategy || 'Unspecified'; (strat[k] = strat[k] || { c: 0, p: 0, r: 0 }).c++; strat[k].p += Number(t.pnl); strat[k].r += Number(t.rMultiple) || 0; });
+    lines.push('STRATEGY_PERFORMANCE:');
+    Object.entries(strat).forEach(([k, v]) => lines.push(`${k}: ${v.c} trades, ${fmtMoney(v.p)} net, avg ${(v.r / v.c).toFixed(2)}R`));
+  }
+  return lines.join('\n');
+}
+
+function AIMentorView({ trades, onClose }) {
+  const [topic, setTopic] = useState('General');
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+
+  function checkAndBumpDailyLimit() {
+    const key = 'mentor_usage_' + new Date().toISOString().slice(0, 10);
+    const count = Number(localStorage.getItem(key) || '0');
+    if (count >= 15) return false;
+    localStorage.setItem(key, String(count + 1));
+    return true;
+  }
+
+  async function sendMessage() {
+    const text = input.trim();
+    if (!text || sending) return;
+    if (!checkAndBumpDailyLimit()) {
+      setError("You've reached today's AI Mentor limit (free-tier protection). Your statistical Coach is still fully available.");
+      return;
+    }
+    setError('');
+    const newMessages = [...messages, { role: 'user', content: text }];
+    setMessages(newMessages);
+    setInput('');
+    setSending(true);
+    try {
+      const statsContext = buildStatsContext(trades, topic);
+      const fullSystemPrompt = `${MENTOR_SYSTEM_PROMPT}\n\nCurrent topic: ${topic}\n\n${statsContext}`;
+      const res = await fetch('/api/mentor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ systemPrompt: fullSystemPrompt, messages: newMessages }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Request failed');
+      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+    } catch (e) {
+      console.error('[Mentor] send failed:', e);
+      setError(e.message || 'Could not reach the AI Mentor. Try the statistical Coach instead.');
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+      <div className="rounded-2xl bg-gradient-to-br from-[#141519] to-[#0F1012] border border-white/[0.06] p-5">
+        <p className="text-sm font-semibold mb-1">RTrade AI Mentor</p>
+        <p className="text-[12px] text-[#6B7280]">Discuss your trading. Understand your patterns. Not a signal service — grounded in your own journal data.</p>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {MENTOR_TOPICS.map(t => (
+          <button key={t} onClick={() => setTopic(t)} className={`shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-medium border ${topic === t ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#1A1B1F] border-white/[0.08] text-[#6B7280]'}`}>{t}</button>
+        ))}
+      </div>
+
+      <div className="space-y-3">
+        {messages.length === 0 && (
+          <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+            <p className="text-sm text-[#6B7280]">Ask something specific — e.g. "Why do I keep losing on short trades?" or "Is my risk sizing consistent?" The Mentor will use your real {topic.toLowerCase()} data to answer.</p>
+          </div>
+        )}
+        {messages.map((m, i) => (
+          <div key={i} className={`rounded-2xl p-4 max-w-[88%] ${m.role === 'user' ? 'bg-[#22C55E]/15 ml-auto' : 'bg-[#141519] border border-white/[0.06]'}`}>
+            <p className="text-sm leading-relaxed whitespace-pre-wrap">{m.content}</p>
+          </div>
+        ))}
+        {sending && <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4 max-w-[88%]"><p className="text-sm text-[#6B7280]">Thinking...</p></div>}
+      </div>
+
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
+
+      <div className="flex gap-2 sticky bottom-2">
+        <input
+          type="text"
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && sendMessage()}
+          placeholder="Ask your mentor..."
+          className={inputCls}
+        />
+        <button onClick={sendMessage} disabled={sending || !input.trim()} className="px-4 rounded-xl bg-[#22C55E] text-black text-sm font-semibold shrink-0 disabled:opacity-40">Send</button>
+      </div>
+    </>
+  );
+}
+
 function CoachView({ trades, onClose }) {
   const [mode, setMode] = useState('overview');
   const insights = trades.length >= 5 ? generateInsights(trades) : [];
@@ -1131,16 +1265,19 @@ function StatsView({ trades }) {
   const [showManager, setShowManager] = useState(false);
   const [showPsych, setShowPsych] = useState(false);
   const [showCoach, setShowCoach] = useState(false);
+  const [showMentor, setShowMentor] = useState(false);
   if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
   if (showPsych) return <PsychologyView trades={trades} onClose={() => setShowPsych(false)} />;
   if (showCoach) return <CoachView trades={trades} onClose={() => setShowCoach(false)} />;
+  if (showMentor) return <AIMentorView trades={trades} onClose={() => setShowMentor(false)} />;
   if (trades.length === 0) {
     return (
       <>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
           <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
           <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
+          <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
         </div>
         <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
@@ -1195,10 +1332,11 @@ function StatsView({ trades }) {
 
   return (
     <>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
         <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
         <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
+        <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
