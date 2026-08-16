@@ -1101,16 +1101,38 @@ function buildStatsContext(trades, topic) {
 }
 
 function renderFormatted(text) {
-  return text.split('\n').map((line, li) => (
-    <React.Fragment key={li}>
-      {li > 0 && <br />}
-      {line.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
-        part.startsWith('**') && part.endsWith('**')
-          ? <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
-          : <React.Fragment key={i}>{part}</React.Fragment>
-      )}
-    </React.Fragment>
-  ));
+  return text.split('\n').map((line, li) => {
+    const trimmed = line.trim();
+    const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)/);
+    const inline = (str) => str.split(/(\*\*[^*]+\*\*)/g).map((part, i) =>
+      part.startsWith('**') && part.endsWith('**')
+        ? <strong key={i} className="font-semibold">{part.slice(2, -2)}</strong>
+        : <React.Fragment key={i}>{part}</React.Fragment>
+    );
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const sizeCls = level === 1 ? 'text-base font-bold' : level === 2 ? 'text-[15px] font-bold' : 'text-sm font-semibold';
+      return <div key={li} className={`${sizeCls} mt-2 mb-1`}>{inline(headingMatch[2])}</div>;
+    }
+    return (
+      <React.Fragment key={li}>
+        {li > 0 && <br />}
+        {inline(line)}
+      </React.Fragment>
+    );
+  });
+}
+
+function dedupeRepeatedTail(text) {
+  const paragraphs = text.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const p of paragraphs) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    out.push(p);
+  }
+  return out.join('\n\n');
 }
 
 function AIMentorView({ trades, onClose }) {
@@ -1150,7 +1172,7 @@ function AIMentorView({ trades, onClose }) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Request failed');
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: dedupeRepeatedTail(data.reply) }]);
     } catch (e) {
       console.error('[Mentor] send failed:', e);
       setError(e.message || 'Could not reach the AI Mentor. Try the statistical Coach instead.');
