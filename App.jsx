@@ -1490,7 +1490,9 @@ function RiskManagementView({ trades, onClose }) {
   const currentDDPct = peak > 0 ? (currentDD / peak) * 100 : 0;
 
   const riskyTrades = trades.filter(t => t.risk && startingBalance > 0);
-  const avgRiskPct = riskyTrades.length > 0 ? riskyTrades.reduce((a, t) => a + (Number(t.risk) / currentEquity) * 100, 0) / riskyTrades.length : null;
+  const avgRiskPct = riskyTrades.length > 0 ? riskyTrades.reduce((a, t) => a + (Number(t.risk) / startingBalance) * 100, 0) / riskyTrades.length : null;
+
+  const equityMismatch = startingBalance > 0 && Math.abs(totalPnl) > startingBalance * 3;
 
   const entryN = parseFloat(calcEntry), stopN = parseFloat(calcStop), riskPctN = parseFloat(calcRiskPct);
   const calcValid = !isNaN(entryN) && !isNaN(stopN) && !isNaN(riskPctN) && entryN !== stopN && currentEquity > 0;
@@ -1516,8 +1518,14 @@ function RiskManagementView({ trades, onClose }) {
         <p className="text-[11px] text-[#6B7280] mt-2">This is your account size before any of your logged trades — used to calculate equity, drawdown %, and position sizing.</p>
       </div>
 
+      {equityMismatch && (
+        <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3">
+          <p className="text-[12px] text-[#F59E0B] leading-relaxed">Your logged trades' total P&L ({fmtMoney(totalPnl)}) is large compared to your ${startingBalance} starting balance. If some of your trades were test/demo entries, delete them from the Ledger, or update your starting balance to match your real account — otherwise the numbers below (like drawdown %) won't be meaningful.</p>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Current Equity" value={fmtMoney(currentEquity).replace('+', '$')} />
+        <StatCard label="Current Equity" value={fmtMoney(currentEquity).replace('+', '$')} negative={currentEquity < 0} />
         <StatCard label="Net P&L" value={fmtMoney(totalPnl)} positive={totalPnl > 0} negative={totalPnl < 0} />
         <StatCard label="Max Drawdown" value={`${maxDDPct.toFixed(1)}%`} sub={fmtMoney(-maxDD)} negative={maxDD > 0} />
         <StatCard label="Current Drawdown" value={`${currentDDPct.toFixed(1)}%`} sub={fmtMoney(-currentDD)} negative={currentDD > 0} />
@@ -1526,8 +1534,8 @@ function RiskManagementView({ trades, onClose }) {
       {avgRiskPct !== null && (
         <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Average Risk per Trade</p>
-          <p className="text-lg font-semibold">{avgRiskPct.toFixed(2)}% of current equity</p>
-          <p className="text-[11px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your current equity. A common target is staying under 1-2% per trade.</p>
+          <p className="text-lg font-semibold">{avgRiskPct.toFixed(2)}% of starting balance</p>
+          <p className="text-[11px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your starting balance. A common target is staying under 1-2% per trade.</p>
         </div>
       )}
 
@@ -1544,7 +1552,11 @@ function RiskManagementView({ trades, onClose }) {
             <div className="rounded-xl bg-[#1A1B1F] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">Position Size</p><p className="text-sm font-semibold">{calcPositionSize.toFixed(4)}</p></div>
           </div>
         ) : (
-          <p className="text-[11px] text-[#6B7280]">{currentEquity <= 0 ? 'Set your starting balance above first.' : 'Enter entry, stop, and risk % to calculate.'}</p>
+          <p className="text-[11px] text-[#6B7280]">
+            {startingBalance <= 0 ? 'Set your starting balance above first.'
+              : currentEquity <= 0 ? `Your current equity is ${fmtMoney(currentEquity)} — negative, based on your logged trades — so position sizing isn't meaningful until it's positive.`
+              : 'Enter entry, stop, and risk % to calculate.'}
+          </p>
         )}
       </div>
     </>
