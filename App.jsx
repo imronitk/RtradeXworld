@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera } from 'lucide-react';
+import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
 
 // ===== SUPABASE CONNECTION =====
@@ -123,6 +123,36 @@ async function apiStrategyUpdate(id, s) {
 async function apiStrategyDelete(id) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/strategies?id=eq.${id}`, { method: 'DELETE', headers: HEADERS });
   if (!res.ok) throw new Error(`Strategy delete failed (${res.status}): ${await res.text()}`);
+}
+
+// ===== RULE ENGINE API =====
+function ruleFromDb(row) { return { id: row.id, ruleType: row.rule_type, threshold: row.threshold, enabled: row.enabled }; }
+async function apiRulesList() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_rules?select=*&order=created_at.asc`, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Rules read failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).map(ruleFromDb);
+}
+async function apiRuleCreate(ruleType, threshold) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_rules`, {
+    method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' },
+    body: JSON.stringify({ rule_type: ruleType, threshold, enabled: true }),
+  });
+  if (!res.ok) throw new Error(`Rule create failed (${res.status}): ${await res.text()}`);
+  return ruleFromDb((await res.json())[0]);
+}
+async function apiRuleUpdate(id, fields) {
+  const body = {};
+  if (fields.threshold !== undefined) body.threshold = fields.threshold;
+  if (fields.enabled !== undefined) body.enabled = fields.enabled;
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_rules?id=eq.${id}`, {
+    method: 'PATCH', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Rule update failed (${res.status}): ${await res.text()}`);
+  return ruleFromDb((await res.json())[0]);
+}
+async function apiRuleDelete(id) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_rules?id=eq.${id}`, { method: 'DELETE', headers: HEADERS });
+  if (!res.ok) throw new Error(`Rule delete failed (${res.status}): ${await res.text()}`);
 }
 
 async function withRetry(fn, attempts = 2) {
@@ -1226,6 +1256,170 @@ function AIMentorView({ trades, onClose }) {
   );
 }
 
+const RULE_TYPES = {
+  max_trades_per_day: { label: 'Max Trades per Day', unit: 'trades', placeholder: 'e.g. 3' },
+  max_risk_per_trade: { label: 'Max Risk per Trade', unit: '$', placeholder: 'e.g. 50' },
+  max_daily_loss: { label: 'Max Daily Loss', unit: '$', placeholder: 'e.g. 100' },
+  stop_after_losses: { label: 'Stop After Consecutive Losses', unit: 'losses', placeholder: 'e.g. 2' },
+};
+
+function checkRuleViolations(trades, rules) {
+  const violations = [];
+  const active = rules.filter(r => r.enabled);
+  const byDate = {};
+  trades.forEach(t => { if (!t.date) return; (byDate[t.date] = byDate[t.date] || []).push(t); });
+
+  const maxTrades = active.find(r => r.ruleType === 'max_trades_per_day');
+  if (maxTrades) {
+    Object.entries(byDate).forEach(([date, list]) => {
+      if (list.length > maxTrades.threshold) {
+        list.slice(maxTrades.threshold).forEach((t, i) => violations.push({ trade: t, rule: RULE_TYPES.max_trades_per_day.label, message: `Trade #${maxTrades.threshold + i + 1} on ${date} exceeded your ${maxTrades.threshold}/day limit` }));
+      }
+    });
+  }
+  const maxRisk = active.find(r => r.ruleType === 'max_risk_per_trade');
+  if (maxRisk) {
+    trades.forEach(t => { if (Number(t.risk) > maxRisk.threshold) violations.push({ trade: t, rule: RULE_TYPES.max_risk_per_trade.label, message: `Risked $${Number(t.risk).toFixed(2)}, over your $${maxRisk.threshold} limit` }); });
+  }
+  const maxDailyLoss = active.find(r => r.ruleType === 'max_daily_loss');
+  if (maxDailyLoss) {
+    Object.entries(byDate).forEach(([date, list]) => {
+      const dayPnl = list.reduce((a, t) => a + Number(t.pnl), 0);
+      if (dayPnl < -maxDailyLoss.threshold) violations.push({ trade: list[list.length - 1], rule: RULE_TYPES.max_daily_loss.label, message: `${date} lost $${Math.abs(dayPnl).toFixed(2)}, over your $${maxDailyLoss.threshold} daily limit` });
+    });
+  }
+  const stopAfter = active.find(r => r.ruleType === 'stop_after_losses');
+  if (stopAfter) {
+    const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+    let streak = 0;
+    chronological.forEach(t => {
+      if (streak >= stopAfter.threshold) violations.push({ trade: t, rule: RULE_TYPES.stop_after_losses.label, message: `Traded again after ${streak} consecutive losses (limit: ${stopAfter.threshold})` });
+      streak = Number(t.pnl) < 0 ? streak + 1 : 0;
+    });
+  }
+  return violations;
+}
+
+function RuleEngineView({ trades, onClose }) {
+  const [rules, setRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [newType, setNewType] = useState('max_trades_per_day');
+  const [newThreshold, setNewThreshold] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { setRules(await apiRulesList()); }
+      catch (e) { setError(e.message); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const usedTypes = rules.map(r => r.ruleType);
+  const availableTypes = Object.keys(RULE_TYPES).filter(t => !usedTypes.includes(t));
+
+  async function handleAddRule() {
+    if (!newThreshold || isNaN(Number(newThreshold))) return;
+    setAdding(true);
+    setError('');
+    try {
+      const created = await apiRuleCreate(newType, Number(newThreshold));
+      setRules(prev => [...prev, created]);
+      setNewThreshold('');
+      const remaining = availableTypes.filter(t => t !== newType);
+      if (remaining.length) setNewType(remaining[0]);
+    } catch (e) { setError(e.message || 'Could not add rule.'); }
+    finally { setAdding(false); }
+  }
+
+  async function toggleRule(rule) {
+    try {
+      const updated = await apiRuleUpdate(rule.id, { enabled: !rule.enabled });
+      setRules(prev => prev.map(r => r.id === rule.id ? updated : r));
+    } catch (e) { setError(e.message || 'Could not update rule.'); }
+  }
+
+  async function deleteRule(rule) {
+    if (!window.confirm(`Remove the "${RULE_TYPES[rule.ruleType].label}" rule?`)) return;
+    try {
+      await apiRuleDelete(rule.id);
+      setRules(prev => prev.filter(r => r.id !== rule.id));
+    } catch (e) { setError(e.message || 'Could not delete rule.'); }
+  }
+
+  const violations = trades.length > 0 && rules.some(r => r.enabled) ? checkRuleViolations(trades, rules) : [];
+  const violatingTradeIds = new Set(violations.map(v => v.trade.id));
+  const complianceRate = trades.length > 0 ? Math.round(((trades.length - violatingTradeIds.size) / trades.length) * 100) : null;
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
+
+      {complianceRate !== null && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Rule Compliance</p>
+          <p className="text-3xl font-semibold" style={{ color: complianceRate >= 80 ? '#22C55E' : complianceRate >= 60 ? '#F59E0B' : '#EF4444' }}>{complianceRate}%</p>
+          <p className="text-[12px] text-[#6B7280] mt-1">{violatingTradeIds.size} of {trades.length} trades involved a rule violation</p>
+        </div>
+      )}
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-3">
+        <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">Your Rules</p>
+        {loading ? <p className="text-sm text-[#6B7280]">Loading...</p> : rules.length === 0 ? (
+          <p className="text-sm text-[#6B7280]">No rules set yet — add one below.</p>
+        ) : (
+          rules.map(r => (
+            <div key={r.id} className="flex items-center justify-between rounded-xl bg-[#1A1B1F] border border-white/[0.06] px-3.5 py-3">
+              <div>
+                <p className="text-sm font-medium">{RULE_TYPES[r.ruleType].label}</p>
+                <p className="text-[12px] text-[#6B7280]">{RULE_TYPES[r.ruleType].unit === '$' ? '$' : ''}{r.threshold}{RULE_TYPES[r.ruleType].unit !== '$' ? ' ' + RULE_TYPES[r.ruleType].unit : ''}</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button onClick={() => toggleRule(r)} className={`w-10 h-6 rounded-full relative transition-colors ${r.enabled ? 'bg-[#22C55E]' : 'bg-[#3A3B40]'}`}>
+                  <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${r.enabled ? 'left-[18px]' : 'left-0.5'}`} />
+                </button>
+                <button onClick={() => deleteRule(r)}><Trash2 size={15} className="text-[#EF4444]" /></button>
+              </div>
+            </div>
+          ))
+        )}
+
+        {availableTypes.length > 0 && (
+          <div className="pt-2 border-t border-white/[0.06] space-y-2">
+            <select value={newType} onChange={e => setNewType(e.target.value)} className={inputCls}>
+              {availableTypes.map(t => <option key={t} value={t}>{RULE_TYPES[t].label}</option>)}
+            </select>
+            <div className="flex gap-2">
+              <input inputMode="decimal" type="number" placeholder={RULE_TYPES[newType].placeholder} value={newThreshold} onChange={e => setNewThreshold(e.target.value)} className={inputCls} />
+              <button onClick={handleAddRule} disabled={!newThreshold || adding} className="px-4 rounded-xl bg-[#22C55E] text-black text-sm font-semibold shrink-0 disabled:opacity-40">Add</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {violations.length > 0 && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Violations ({violations.length})</p>
+          <div className="space-y-2">
+            {violations.slice(0, 20).map((v, i) => (
+              <div key={i} className="flex items-start gap-2.5">
+                <AlertCircle size={14} className="text-[#EF4444] shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[12px] font-medium text-[#EF4444]">{v.rule}</p>
+                  <p className="text-[12px] text-[#9CA3AF]">{v.message}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function CoachView({ trades, onClose }) {
   const [mode, setMode] = useState('overview');
   const insights = trades.length >= 5 ? generateInsights(trades) : [];
@@ -1301,10 +1495,12 @@ function StatsView({ trades }) {
   const [showPsych, setShowPsych] = useState(false);
   const [showCoach, setShowCoach] = useState(false);
   const [showMentor, setShowMentor] = useState(false);
+  const [showRules, setShowRules] = useState(false);
   if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
   if (showPsych) return <PsychologyView trades={trades} onClose={() => setShowPsych(false)} />;
   if (showCoach) return <CoachView trades={trades} onClose={() => setShowCoach(false)} />;
   if (showMentor) return <AIMentorView trades={trades} onClose={() => setShowMentor(false)} />;
+  if (showRules) return <RuleEngineView trades={trades} onClose={() => setShowRules(false)} />;
   if (trades.length === 0) {
     return (
       <>
@@ -1313,6 +1509,7 @@ function StatsView({ trades }) {
           <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
           <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
           <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
+          <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1 col-span-2"><ShieldCheck size={14} /> Rule Engine</button>
         </div>
         <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
@@ -1372,6 +1569,7 @@ function StatsView({ trades }) {
         <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
         <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
         <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
+        <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1 col-span-2"><ShieldCheck size={14} /> Rule Engine</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
