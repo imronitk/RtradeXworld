@@ -1676,7 +1676,7 @@ function JournalView() {
       </div>
 
       <button onClick={handleSave} disabled={saving} className="w-full py-3.5 rounded-xl text-sm font-semibold bg-[#22C55E] text-black flex items-center justify-center gap-2">
-        {savedMsg ? <><Check size={16} /> Saved</> : saving ? 'Saving...' : 'Save Entry'}
+        {savedMsg ? <><Check size={16} /> Saved</> : saving ? 'Saving...' : form.id ? 'Update Entry' : 'Save Entry'}
       </button>
 
       {!loading && entries.length > 0 && (
