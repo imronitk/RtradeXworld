@@ -155,6 +155,23 @@ async function apiRuleDelete(id) {
   if (!res.ok) throw new Error(`Rule delete failed (${res.status}): ${await res.text()}`);
 }
 
+// ===== ACCOUNT SETTINGS API =====
+async function apiGetAccountSettings() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/account_settings?id=eq.main&select=*`, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Account settings read failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return data[0] ? Number(data[0].starting_balance) : 0;
+}
+async function apiSetAccountSettings(balance) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/account_settings?on_conflict=id`, {
+    method: 'POST',
+    headers: { ...HEADERS, Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify({ id: 'main', starting_balance: balance, updated_at: new Date().toISOString() }),
+  });
+  if (!res.ok) throw new Error(`Account settings save failed (${res.status}): ${await res.text()}`);
+  return Number((await res.json())[0].starting_balance);
+}
+
 async function withRetry(fn, attempts = 2) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
@@ -1420,6 +1437,120 @@ function RuleEngineView({ trades, onClose }) {
   );
 }
 
+function RiskManagementView({ trades, onClose }) {
+  const [startingBalance, setStartingBalance] = useState(0);
+  const [balanceInput, setBalanceInput] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [savedMsg, setSavedMsg] = useState(false);
+
+  const [calcEntry, setCalcEntry] = useState('');
+  const [calcStop, setCalcStop] = useState('');
+  const [calcRiskPct, setCalcRiskPct] = useState('1');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const bal = await apiGetAccountSettings();
+        setStartingBalance(bal);
+        setBalanceInput(String(bal));
+      } catch (e) { setError(e.message); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  async function saveBalance() {
+    const val = Number(balanceInput);
+    if (isNaN(val) || val < 0) return;
+    setSaving(true);
+    setError('');
+    try {
+      const saved = await apiSetAccountSettings(val);
+      setStartingBalance(saved);
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 1600);
+    } catch (e) { setError(e.message || 'Could not save.'); }
+    finally { setSaving(false); }
+  }
+
+  const totalPnl = trades.reduce((a, t) => a + (Number(t.pnl) || 0), 0);
+  const currentEquity = startingBalance + totalPnl;
+
+  const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
+  let running = startingBalance, peak = startingBalance, maxDD = 0, maxDDPct = 0;
+  chronological.forEach(t => {
+    running += Number(t.pnl) || 0;
+    peak = Math.max(peak, running);
+    const dd = peak - running;
+    const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
+    if (dd > maxDD) { maxDD = dd; maxDDPct = ddPct; }
+  });
+  const currentDD = peak - running;
+  const currentDDPct = peak > 0 ? (currentDD / peak) * 100 : 0;
+
+  const riskyTrades = trades.filter(t => t.risk && startingBalance > 0);
+  const avgRiskPct = riskyTrades.length > 0 ? riskyTrades.reduce((a, t) => a + (Number(t.risk) / currentEquity) * 100, 0) / riskyTrades.length : null;
+
+  const entryN = parseFloat(calcEntry), stopN = parseFloat(calcStop), riskPctN = parseFloat(calcRiskPct);
+  const calcValid = !isNaN(entryN) && !isNaN(stopN) && !isNaN(riskPctN) && entryN !== stopN && currentEquity > 0;
+  let calcRiskAmount = 0, calcPositionSize = 0;
+  if (calcValid) {
+    calcRiskAmount = currentEquity * (riskPctN / 100);
+    const perUnitRisk = Math.abs(entryN - stopN);
+    calcPositionSize = perUnitRisk > 0 ? calcRiskAmount / perUnitRisk : 0;
+  }
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5">
+        <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Starting Account Balance</p>
+        <div className="flex gap-2">
+          <input inputMode="decimal" type="number" value={balanceInput} onChange={e => setBalanceInput(e.target.value)} placeholder="e.g. 1000" className={inputCls} disabled={loading} />
+          <button onClick={saveBalance} disabled={saving || loading} className="px-4 rounded-xl bg-[#22C55E] text-black text-sm font-semibold shrink-0 disabled:opacity-40">{savedMsg ? <Check size={16} /> : saving ? '...' : 'Save'}</button>
+        </div>
+        <p className="text-[11px] text-[#6B7280] mt-2">This is your account size before any of your logged trades — used to calculate equity, drawdown %, and position sizing.</p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Current Equity" value={fmtMoney(currentEquity).replace('+', '$')} />
+        <StatCard label="Net P&L" value={fmtMoney(totalPnl)} positive={totalPnl > 0} negative={totalPnl < 0} />
+        <StatCard label="Max Drawdown" value={`${maxDDPct.toFixed(1)}%`} sub={fmtMoney(-maxDD)} negative={maxDD > 0} />
+        <StatCard label="Current Drawdown" value={`${currentDDPct.toFixed(1)}%`} sub={fmtMoney(-currentDD)} negative={currentDD > 0} />
+      </div>
+
+      {avgRiskPct !== null && (
+        <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-4">
+          <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Average Risk per Trade</p>
+          <p className="text-lg font-semibold">{avgRiskPct.toFixed(2)}% of current equity</p>
+          <p className="text-[11px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your current equity. A common target is staying under 1-2% per trade.</p>
+        </div>
+      )}
+
+      <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-5 space-y-4">
+        <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">Position Size Calculator</p>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={calcEntry} onChange={e => setCalcEntry(e.target.value)} className={inputCls} /></Field>
+          <Field label="Stop Loss"><input inputMode="decimal" type="number" placeholder="0.00" value={calcStop} onChange={e => setCalcStop(e.target.value)} className={inputCls} /></Field>
+        </div>
+        <Field label="Risk % of Equity"><input inputMode="decimal" type="number" value={calcRiskPct} onChange={e => setCalcRiskPct(e.target.value)} className={inputCls} /></Field>
+        {calcValid ? (
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <div className="rounded-xl bg-[#1A1B1F] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">$ at Risk</p><p className="text-sm font-semibold">${calcRiskAmount.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#1A1B1F] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">Position Size</p><p className="text-sm font-semibold">{calcPositionSize.toFixed(4)}</p></div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-[#6B7280]">{currentEquity <= 0 ? 'Set your starting balance above first.' : 'Enter entry, stop, and risk % to calculate.'}</p>
+        )}
+      </div>
+    </>
+  );
+}
+
 function CoachView({ trades, onClose }) {
   const [mode, setMode] = useState('overview');
   const insights = trades.length >= 5 ? generateInsights(trades) : [];
@@ -1496,11 +1627,13 @@ function StatsView({ trades }) {
   const [showCoach, setShowCoach] = useState(false);
   const [showMentor, setShowMentor] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [showRisk, setShowRisk] = useState(false);
   if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
   if (showPsych) return <PsychologyView trades={trades} onClose={() => setShowPsych(false)} />;
   if (showCoach) return <CoachView trades={trades} onClose={() => setShowCoach(false)} />;
   if (showMentor) return <AIMentorView trades={trades} onClose={() => setShowMentor(false)} />;
   if (showRules) return <RuleEngineView trades={trades} onClose={() => setShowRules(false)} />;
+  if (showRisk) return <RiskManagementView trades={trades} onClose={() => setShowRisk(false)} />;
   if (trades.length === 0) {
     return (
       <>
@@ -1509,7 +1642,8 @@ function StatsView({ trades }) {
           <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
           <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
           <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
-          <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1 col-span-2"><ShieldCheck size={14} /> Rule Engine</button>
+          <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
+          <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
         </div>
         <div className="rounded-2xl bg-[#141519] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
@@ -1569,7 +1703,8 @@ function StatsView({ trades }) {
         <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
         <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
         <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
-        <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1 col-span-2"><ShieldCheck size={14} /> Rule Engine</button>
+        <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
+        <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#141519] border border-white/[0.06] text-[#22C55E] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
