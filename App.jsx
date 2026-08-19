@@ -2046,7 +2046,7 @@ function CsvImportView({ trades, onClose, onImported }) {
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
           <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Delta Exchange — Upload Order History CSV</p>
           <label className="w-full bg-[#0C0810] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-6 text-center block cursor-pointer">
-            <input type="file" accept=".csv" onChange={handleFile} className="hidden" disabled={parsing} />
+            <input type="file" accept=".csv,text/csv,application/vnd.ms-excel,text/plain,text/comma-separated-values" onChange={handleFile} className="hidden" disabled={parsing} />
             <p className="text-[12px] text-[#9CA3AF]">{parsing ? 'Reading file...' : 'Tap to choose your CSV file'}</p>
           </label>
           {error && <p className="text-[11px] text-[#EF4444] mt-3">{error}</p>}
