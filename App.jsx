@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck, Sparkles } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
+import Papa from 'papaparse';
 
 // ===== SUPABASE CONNECTION =====
 const SUPABASE_URL = 'https://mggvpiwlgrdusnbxfuxd.supabase.co';
@@ -14,6 +15,7 @@ function toDb(t) {
     risk_amount: t.risk, pnl: t.pnl, rr: t.rMultiple, strategy: t.strategy, setup_type: t.setup,
     emotion: t.emotion, mistake_tags: t.mistake, confidence: t.confidence, notes: t.notes,
     screenshot_url: t.screenshotUrl || null,
+    import_fingerprint: t.import_fingerprint || null, import_source: t.import_source || null,
   };
 }
 function fromDb(row) {
@@ -23,6 +25,7 @@ function fromDb(row) {
     risk: row.risk_amount, pnl: row.pnl, rMultiple: row.rr, strategy: row.strategy, setup: row.setup_type,
     emotion: row.emotion, mistake: row.mistake_tags, confidence: row.confidence, notes: row.notes,
     screenshotUrl: row.screenshot_url,
+    import_fingerprint: row.import_fingerprint, import_source: row.import_source,
   };
 }
 async function uploadScreenshot(file) {
@@ -62,8 +65,143 @@ async function apiDelete(id) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/trades?id=eq.${id}`, { method: 'DELETE', headers: HEADERS });
   if (!res.ok) throw new Error(`Database delete failed (${res.status}): ${await res.text()}`);
 }
+async function apiInsertMany(tradesArr) {
+  if (tradesArr.length === 0) return [];
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trades`, {
+    method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(tradesArr.map(toDb)),
+  });
+  if (!res.ok) throw new Error(`Bulk import failed (${res.status}): ${await res.text()}`);
+  return (await res.json()).map(fromDb);
+}
 
-// ===== JOURNAL API =====
+// ===== DELTA EXCHANGE CSV IMPORT ENGINE =====
+const DELTA_REQUIRED_HEADERS = ['Contract', 'Qty', 'Side', 'Exec.Price', 'Trading Fees', 'Realised P&L', 'Order ID'];
+
+function detectDeltaExchange(headers) {
+  return DELTA_REQUIRED_HEADERS.every(h => headers.includes(h));
+}
+
+function parseFilledQty(filledRemaining) {
+  if (!filledRemaining) return 0;
+  const parts = String(filledRemaining).split('/');
+  return parseFloat(parts[0]) || 0;
+}
+
+function computeFingerprint(t) {
+  return [t.symbol, t.direction, t.entryTime, t.exitTime, t.positionSize, Number(t.entry).toFixed(6), Number(t.exit).toFixed(6)].join('|');
+}
+
+function reconstructDeltaTrades(rows, existingFingerprints) {
+  const result = { completedTrades: [], openPositions: [], duplicates: 0, errors: [], cancelledCount: 0, filledExecutionCount: 0 };
+
+  const executions = [];
+  rows.forEach(row => {
+    const status = (row['Status'] || '').toLowerCase();
+    if (status === 'cancelled') { result.cancelledCount++; return; }
+    const filledQty = parseFilledQty(row['Filled/Remaining']);
+    if (filledQty <= 0) return;
+    const price = parseFloat(row['Exec.Price']);
+    const side = (row['Side'] || '').toLowerCase();
+    if (!row['Contract'] || isNaN(price) || (side !== 'buy' && side !== 'sell')) return;
+    result.filledExecutionCount++;
+    executions.push({
+      contract: row['Contract'],
+      time: row['Time'],
+      side,
+      qty: filledQty,
+      price,
+      fee: parseFloat(row['Trading Fees']) || 0,
+      realisedPnl: parseFloat(row['Realised P&L']) || 0,
+      stopPrice: row['Stop Price'] ? parseFloat(row['Stop Price']) : null,
+      orderId: row['Order ID'],
+    });
+  });
+
+  const byContract = {};
+  executions.forEach(e => { (byContract[e.contract] = byContract[e.contract] || []).push(e); });
+
+  function finalizeTrade(contract, direction, entryFills, exitFills, feeSum, realisedPnlSum, stopPrice) {
+    const entryQty = entryFills.reduce((a, f) => a + f.qty, 0);
+    const exitQty = exitFills.reduce((a, f) => a + f.qty, 0);
+    const avgEntry = entryFills.reduce((a, f) => a + f.price * f.qty, 0) / entryQty;
+    const avgExit = exitQty > 0 ? exitFills.reduce((a, f) => a + f.price * f.qty, 0) / exitQty : avgEntry;
+    const entryTime = entryFills[0].time;
+    const exitTime = exitFills.length ? exitFills[exitFills.length - 1].time : entryTime;
+    const dateOnly = (entryTime || '').slice(0, 10);
+    const trade = {
+      date: dateOnly || new Date().toISOString().slice(0, 10),
+      market: 'Crypto',
+      symbol: contract,
+      direction,
+      entry: avgEntry,
+      exit: avgExit,
+      stopLoss: stopPrice,
+      positionSize: entryQty,
+      risk: stopPrice ? Math.abs(avgEntry - stopPrice) * entryQty : 0,
+      pnl: Number((realisedPnlSum - feeSum).toFixed(8)),
+      rMultiple: stopPrice && Math.abs(avgEntry - stopPrice) > 0 ? (realisedPnlSum - feeSum) / (Math.abs(avgEntry - stopPrice) * entryQty) : 0,
+      strategy: 'Imported',
+      setup: '',
+      emotion: '',
+      mistake: 'None',
+      confidence: 3,
+      notes: 'Imported from Delta Exchange',
+      entryTime, exitTime,
+    };
+    trade.import_fingerprint = computeFingerprint(trade);
+    trade.import_source = 'delta_exchange';
+    if (existingFingerprints.has(trade.import_fingerprint)) { result.duplicates++; return; }
+    result.completedTrades.push(trade);
+  }
+
+  Object.entries(byContract).forEach(([contract, execs]) => {
+    execs.sort((a, b) => new Date(a.time) - new Date(b.time));
+    let position = 0, entryFills = [], exitFills = [], feeSum = 0, realisedPnlSum = 0, stopPrice = null, direction = null;
+
+    execs.forEach(e => {
+      const signedQty = e.side === 'buy' ? e.qty : -e.qty;
+      feeSum += e.fee;
+      if (e.stopPrice && stopPrice === null) stopPrice = e.stopPrice;
+
+      if (position === 0) {
+        position = signedQty;
+        direction = signedQty > 0 ? 'long' : 'short';
+        entryFills = [{ price: e.price, qty: e.qty, time: e.time }];
+        exitFills = [];
+        realisedPnlSum = 0;
+      } else if ((position > 0 && signedQty > 0) || (position < 0 && signedQty < 0)) {
+        position += signedQty;
+        entryFills.push({ price: e.price, qty: e.qty, time: e.time });
+      } else {
+        const closingQty = Math.min(Math.abs(position), e.qty);
+        exitFills.push({ price: e.price, qty: closingQty, time: e.time });
+        realisedPnlSum += e.realisedPnl;
+        position += signedQty;
+
+        if (Math.abs(position) < 1e-9) {
+          finalizeTrade(contract, direction, entryFills, exitFills, feeSum, realisedPnlSum, stopPrice);
+          position = 0; entryFills = []; exitFills = []; feeSum = 0; realisedPnlSum = 0; stopPrice = null; direction = null;
+        } else if (Math.sign(position) !== Math.sign(signedQty > 0 ? 1 : -1) * Math.sign(position - signedQty)) {
+          // position flipped sign - close old, open new with remainder
+          finalizeTrade(contract, direction, entryFills, exitFills, feeSum, realisedPnlSum, stopPrice);
+          const leftoverQty = Math.abs(position);
+          direction = position > 0 ? 'long' : 'short';
+          entryFills = [{ price: e.price, qty: leftoverQty, time: e.time }];
+          exitFills = []; feeSum = 0; realisedPnlSum = 0; stopPrice = null;
+        }
+      }
+    });
+
+    if (position !== 0) {
+      const entryQty = entryFills.reduce((a, f) => a + f.qty, 0);
+      const avgEntry = entryFills.reduce((a, f) => a + f.price * f.qty, 0) / entryQty;
+      result.openPositions.push({ symbol: contract, direction, quantity: Math.abs(position), entryPrice: avgEntry });
+    }
+  });
+
+  return result;
+}
+
 function journalToDb(e) {
   return {
     date: e.date, mood: e.mood, confidence: e.confidence,
@@ -1841,6 +1979,113 @@ function JournalView() {
   );
 }
 
+function CsvImportView({ trades, onClose, onImported }) {
+  const [broker, setBroker] = useState(null);
+  const [parsing, setParsing] = useState(false);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [done, setDone] = useState(null);
+
+  function handleFile(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setError('');
+    setParsing(true);
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        setParsing(false);
+        const headers = results.meta.fields || [];
+        if (!detectDeltaExchange(headers)) {
+          setError("This doesn't look like a Delta Exchange order history CSV — expected columns like Contract, Qty, Side, Exec.Price, Trading Fees, Realised P&L, Order ID weren't all found.");
+          return;
+        }
+        const existingFingerprints = new Set(trades.filter(t => t.import_fingerprint).map(t => t.import_fingerprint));
+        const result = reconstructDeltaTrades(results.data, existingFingerprints);
+        setPreview({ totalRows: results.data.length, ...result });
+      },
+      error: (err) => { setParsing(false); setError('Could not read that file: ' + err.message); },
+    });
+  }
+
+  async function confirmImport() {
+    if (!preview || preview.completedTrades.length === 0) return;
+    setImporting(true);
+    setError('');
+    try {
+      const inserted = await apiInsertMany(preview.completedTrades);
+      onImported(inserted);
+      setDone(inserted.length);
+    } catch (e) {
+      setError(e.message || 'Import failed.');
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
+
+      {done !== null ? (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center">
+          <Check size={28} className="text-[#22C55E] mx-auto mb-2" />
+          <p className="text-[13px] font-semibold mb-1">Imported {done} trade{done !== 1 ? 's' : ''}</p>
+          <p className="text-[12px] text-[#6B7280] mb-4">Check All Trades to review them.</p>
+          <button onClick={onClose} className="py-2.5 px-5 rounded-xl bg-[#6B21A8] text-[12px] font-medium">Done</button>
+        </div>
+      ) : !broker ? (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Select Broker / Exchange</p>
+          <button onClick={() => setBroker('delta')} className="w-full text-left py-3.5 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px] font-medium">Delta Exchange</button>
+          <p className="text-[11px] text-[#6B7280] mt-3">More brokers coming later — this only supports Delta Exchange order history CSVs right now.</p>
+        </div>
+      ) : !preview ? (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Delta Exchange — Upload Order History CSV</p>
+          <label className="w-full bg-[#0C0810] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-6 text-center block cursor-pointer">
+            <input type="file" accept=".csv" onChange={handleFile} className="hidden" disabled={parsing} />
+            <p className="text-[12px] text-[#9CA3AF]">{parsing ? 'Reading file...' : 'Tap to choose your CSV file'}</p>
+          </label>
+          {error && <p className="text-[11px] text-[#EF4444] mt-3">{error}</p>}
+        </div>
+      ) : (
+        <>
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+            <p className="text-[12px] font-semibold text-[#22C55E] mb-3">✓ Delta Exchange CSV Detected</p>
+            <div className="space-y-1.5 text-[12px]">
+              <div className="flex justify-between"><span className="text-[#6B7280]">Total CSV Rows</span><span>{preview.totalRows}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Filled Executions</span><span>{preview.filledExecutionCount}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Cancelled Orders</span><span>{preview.cancelledCount}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Completed Trades</span><span className="text-[#22C55E] font-medium">{preview.completedTrades.length}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Open Positions</span><span>{preview.openPositions.length}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Duplicates Skipped</span><span>{preview.duplicates}</span></div>
+            </div>
+          </div>
+
+          {preview.openPositions.length > 0 && (
+            <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
+              <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Open Positions (not imported)</p>
+              {preview.openPositions.map((p, i) => (
+                <p key={i} className="text-[12px] text-[#9CA3AF]">{p.symbol} · {p.direction === 'long' ? 'Long' : 'Short'} · {p.quantity} @ {p.entryPrice.toFixed(2)}</p>
+              ))}
+            </div>
+          )}
+
+          {error && <p className="text-[11px] text-[#EF4444]">{error}</p>}
+
+          <div className="flex gap-2">
+            <button onClick={() => { setPreview(null); }} className="flex-1 py-3 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[12px] font-medium text-[#9CA3AF]">Cancel</button>
+            <button onClick={confirmImport} disabled={importing || preview.completedTrades.length === 0} className="flex-1 py-3 rounded-xl bg-[#6B21A8] text-[12px] font-semibold disabled:opacity-40">{importing ? 'Importing...' : `Import ${preview.completedTrades.length} Trades`}</button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   const [subview, setSubview] = useState('add');
   const [editingTrade, setEditingTrade] = useState(null);
@@ -1937,6 +2182,9 @@ export default function App() {
   };
   const [eyebrow, title] = titles[active];
 
+  const [showCsvImport, setShowCsvImport] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+
   return (
     <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
       <header className="px-5 pt-6 pb-4 flex items-center justify-between">
@@ -1947,11 +2195,27 @@ export default function App() {
           </p>
           <h1 className="font-display text-[16px] font-semibold tracking-tight mt-0.5">{title}</h1>
         </div>
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2C0553] to-[#030204] border border-[#6B21A8]/30 flex items-center justify-center">
-          <Flame size={16} className="text-[#6B21A8]" />
+        <div className="flex items-center gap-2 relative">
+          {active === 'trades' && (
+            <>
+              <button onClick={() => setShowHeaderMenu(v => !v)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF] text-lg leading-none">⋮</button>
+              {showHeaderMenu && (
+                <div className="absolute top-11 right-0 bg-[#0C0810] border border-white/[0.08] rounded-xl overflow-hidden z-20 min-w-[160px] shadow-xl">
+                  <button onClick={() => { setShowCsvImport(true); setShowHeaderMenu(false); }} className="w-full text-left px-4 py-3 text-[12px] text-[#E8E9EC] active:bg-[#151020]">Import CSV</button>
+                </div>
+              )}
+            </>
+          )}
+          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2C0553] to-[#030204] border border-[#6B21A8]/30 flex items-center justify-center">
+            <Flame size={16} className="text-[#6B21A8]" />
+          </div>
         </div>
       </header>
       <main className="flex-1 px-5 pb-28 space-y-4 overflow-y-auto">
+        {showCsvImport ? (
+          <CsvImportView trades={trades} onClose={() => setShowCsvImport(false)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
+        ) : (
+        <>
         {active === 'dashboard' && <DashboardView trades={trades} loading={loading} />}
         {active === 'trades' && <TradesTab trades={trades} onAdd={handleAdd} onUpdate={handleUpdate} onDelete={handleDelete} dbError={dbError} />}
         {active === 'calendar' && <CalendarView trades={trades} />}
@@ -1959,6 +2223,8 @@ export default function App() {
         {active === 'journal' && <JournalView />}
         {active === 'risk' && <RiskManagementView trades={trades} />}
         {active === 'mentor' && <AIMentorView trades={trades} />}
+        </>
+        )}
       </main>
       <nav className="fixed bottom-0 left-0 right-0 bg-[#030204]/95 backdrop-blur-xl border-t border-white/[0.06] px-1 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="flex justify-between max-w-md mx-auto">
