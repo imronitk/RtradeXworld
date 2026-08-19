@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck } from 'lucide-react';
+import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck, Sparkles } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
 
 // ===== SUPABASE CONNECTION =====
@@ -187,6 +187,8 @@ const NAV_ITEMS = [
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'stats', label: 'Stats', icon: BarChart3 },
   { id: 'journal', label: 'Journal', icon: BookOpen },
+  { id: 'risk', label: 'Risk', icon: TrendingDown },
+  { id: 'mentor', label: 'Mentor', icon: Sparkles },
 ];
 const MARKETS = ['Forex', 'Stocks', 'Crypto', 'Futures', 'Options', 'Other'];
 const EMOTIONS = ['Calm', 'Confident', 'Anxious', 'FOMO', 'Greedy', 'Fearful', 'Revenge', 'Bored'];
@@ -194,12 +196,12 @@ const MISTAKES = ['None', 'Early Entry', 'Late Entry', 'Moved Stop', 'Oversized'
 const inputCls = "w-full bg-[#0C0810] border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-[12px] text-[#E8E9EC] placeholder:text-[#4B5563] focus:outline-none focus:border-[#6B21A8]/50 transition-colors";
 
 function fmtMoney(n) { const sign = n > 0 ? '+' : n < 0 ? '-' : ''; return `${sign}$${Math.abs(n).toFixed(2)}`; }
-function Field({ label, children }) { return <div><label className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1.5 block">{label}</label>{children}</div>; }
+function Field({ label, children }) { return <div><label className="text-[10px] tracking-wide text-[#6B7280] mb-1.5 block">{label}</label>{children}</div>; }
 function StatCard({ label, value, positive, negative, icon: Icon, sub, compact }) {
   const color = positive ? '#22C55E' : negative ? '#EF4444' : '#E8E9EC';
   return (
     <div className={`rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden min-w-0 ${compact ? 'p-3' : 'p-4'}`}>
-      <div className="flex items-center gap-1.5 text-[#6B7280] mb-2 min-w-0">{Icon && <Icon size={13} className="shrink-0" />}<span className="text-[8.5px] font-medium uppercase tracking-wide truncate">{label}</span></div>
+      <div className="flex items-center gap-1.5 text-[#6B7280] mb-2 min-w-0">{Icon && <Icon size={13} className="shrink-0" />}<span className="text-[8.5px] font-medium tracking-wide truncate">{label}</span></div>
       <p className={`font-display font-semibold tracking-tight truncate ${compact ? 'text-[12px]' : 'text-[16px]'}`} style={{ color }}>{value}</p>
       {sub && <p className="text-[10px] text-[#6B7280] mt-0.5">{sub}</p>}
     </div>
@@ -247,7 +249,7 @@ function DashboardView({ trades, loading }) {
         </div>
       ) : null}
       <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
-        <p className="text-[10px] uppercase tracking-[0.14em] text-[#6B7280] mb-1">Total P&L</p>
+        <p className="text-[10px] tracking-[0.14em] text-[#6B7280] mb-1">Total P&L</p>
         <p className="font-display text-[22px] font-semibold tracking-tight" style={{ color: totalPnl > 0 ? '#22C55E' : totalPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(totalPnl)}</p>
         <div className="h-16 mt-3 -mx-1">
           <ResponsiveContainer width="100%" height="100%">
@@ -361,9 +363,9 @@ function TradeForm({ initial, onSave, saveLabel }) {
         </div>
         {hasNumbers && (
           <div className="grid grid-cols-3 gap-2 pt-1">
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">Risk</p><p className="text-[12px] font-semibold">${riskDollar.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">P&L</p><p className="text-[12px] font-semibold" style={{ color: pnl > 0 ? '#22C55E' : pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{pnl > 0 ? '+' : ''}{pnl.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">R Multiple</p><p className="text-[12px] font-semibold" style={{ color: rMultiple > 0 ? '#22C55E' : rMultiple < 0 ? '#EF4444' : '#E8E9EC' }}>{rMultiple.toFixed(2)}R</p></div>
+            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">Risk</p><p className="text-[12px] font-semibold">${riskDollar.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">P&L</p><p className="text-[12px] font-semibold" style={{ color: pnl > 0 ? '#22C55E' : pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{pnl > 0 ? '+' : ''}{pnl.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">R Multiple</p><p className="text-[12px] font-semibold" style={{ color: rMultiple > 0 ? '#22C55E' : rMultiple < 0 ? '#EF4444' : '#E8E9EC' }}>{rMultiple.toFixed(2)}R</p></div>
           </div>
         )}
       </div>
@@ -504,9 +506,9 @@ function CalendarView({ trades }) {
   return (
     <>
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 grid grid-cols-3 gap-3">
-        <div><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">Month P&L</p><p className="text-[12px] font-semibold truncate" style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(monthPnl)}</p></div>
-        <div><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">Trades</p><p className="text-[12px] font-semibold">{monthTrades.length}</p></div>
-        <div><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">Win Rate</p><p className="text-[12px] font-semibold">{monthWinRate.toFixed(0)}%</p></div>
+        <div><p className="text-[8.5px] text-[#6B7280] mb-1">Month P&L</p><p className="text-[12px] font-semibold truncate" style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(monthPnl)}</p></div>
+        <div><p className="text-[8.5px] text-[#6B7280] mb-1">Trades</p><p className="text-[12px] font-semibold">{monthTrades.length}</p></div>
+        <div><p className="text-[8.5px] text-[#6B7280] mb-1">Win Rate</p><p className="text-[12px] font-semibold">{monthWinRate.toFixed(0)}%</p></div>
       </div>
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-2.5">
@@ -561,7 +563,7 @@ function CalendarView({ trades }) {
 
       {selected && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">{selected}</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">{selected}</p>
           {selectedTrades.length === 0 ? (
             <p className="text-[12px] text-[#6B7280]">No trades this day.</p>
           ) : (
@@ -584,7 +586,7 @@ function GroupTable({ title, groups, icon: Icon }) {
   if (groups.length === 0) return null;
   return (
     <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-      <div className="flex items-center gap-1.5 text-[#6B7280] mb-3"><Icon size={14} /><p className="text-[10px] uppercase tracking-wide font-medium">{title}</p></div>
+      <div className="flex items-center gap-1.5 text-[#6B7280] mb-3"><Icon size={14} /><p className="text-[10px] tracking-wide font-medium">{title}</p></div>
       <div className="space-y-2">
         {groups.map(g => (
           <div key={g.key} className="flex items-center justify-between">
@@ -757,7 +759,7 @@ function PsychologyView({ trades, onClose }) {
 
       {(worstEmotion || costliestMistake) && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 space-y-2">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">Quick Insights</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Quick Insights</p>
           {worstEmotion && worstEmotion.pnl < 0 && (
             <p className="text-[12px] text-[#E8E9EC]">You lose the most when trading <span className="font-semibold text-[#EF4444]">{worstEmotion.key}</span> — {fmtMoney(worstEmotion.pnl)} across {worstEmotion.count} trade{worstEmotion.count !== 1 ? 's' : ''}.</p>
           )}
@@ -775,7 +777,7 @@ function PsychologyView({ trades, onClose }) {
       <GroupTable title="By Confidence Level" groups={byConfidence} icon={Star} />
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Recent Mood (from Journal)</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Recent Mood (from Journal)</p>
         {loading ? (
           <p className="text-[12px] text-[#6B7280]">Loading...</p>
         ) : journalEntries.length === 0 ? (
@@ -886,7 +888,7 @@ function confidenceLabel(n) {
 function EvidenceBlock({ title, children }) {
   return (
     <div>
-      <p className="text-[8.5px] uppercase tracking-wide text-[#6B7280] mb-1">{title}</p>
+      <p className="text-[8.5px] tracking-wide text-[#6B7280] mb-1">{title}</p>
       <div className="text-[12px] text-[#E8E9EC] leading-relaxed">{children}</div>
     </div>
   );
@@ -937,7 +939,7 @@ function WhyLosingView({ trades }) {
     <div className="space-y-3">
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
         <div>
-          <p className="text-[8.5px] uppercase tracking-wide text-[#EF4444] mb-1">Your Biggest Performance Leak</p>
+          <p className="text-[8.5px] tracking-wide text-[#EF4444] mb-1">Your Biggest Performance Leak</p>
           <p className="text-[14px] font-semibold">{top.name}</p>
         </div>
         <EvidenceBlock title="Evidence">
@@ -949,7 +951,7 @@ function WhyLosingView({ trades }) {
       </div>
       {factors.length > 1 && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Other Contributing Factors</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Other Contributing Factors</p>
           <div className="space-y-2">
             {factors.slice(1).map((f, i) => (
               <div key={i} className="flex items-center justify-between">
@@ -1007,14 +1009,14 @@ function ImprovingView({ trades }) {
   return (
     <div className="space-y-3">
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[8.5px] uppercase tracking-wide text-[#6B7280] mb-3">Last {n} Trades vs Previous {n}</p>
+        <p className="text-[8.5px] tracking-wide text-[#6B7280] mb-3">Last {n} Trades vs Previous {n}</p>
         <Row label="Net P&L" prevVal={fmtMoney(p.pnl)} recVal={fmtMoney(r.pnl)} />
         <Row label="Win Rate" prevVal={p.winRate.toFixed(0) + '%'} recVal={r.winRate.toFixed(0) + '%'} />
         <Row label="Average R" prevVal={p.avgR.toFixed(2) + 'R'} recVal={r.avgR.toFixed(2) + 'R'} />
         <Row label="Mistake Rate" prevVal={p.mistakeRate.toFixed(0) + '%'} recVal={r.mistakeRate.toFixed(0) + '%'} higherBetter={false} />
       </div>
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[8.5px] uppercase tracking-wide text-[#6B7280] mb-1">Coach's Verdict</p>
+        <p className="text-[8.5px] tracking-wide text-[#6B7280] mb-1">Coach's Verdict</p>
         <p className="text-[12px] leading-relaxed">{verdict}</p>
       </div>
     </div>
@@ -1083,7 +1085,7 @@ function EdgeLeakView({ trades }) {
     const conf = confidenceLabel(g.count);
     return (
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[8.5px] uppercase tracking-wide mb-1" style={{ color: positive ? '#22C55E' : '#EF4444' }}>{title}</p>
+        <p className="text-[8.5px] tracking-wide mb-1" style={{ color: positive ? '#22C55E' : '#EF4444' }}>{title}</p>
         <p className="text-[12px] font-semibold mb-3">{g.key}</p>
         <div className="grid grid-cols-3 gap-2">
           <div><p className="text-[8.5px] text-[#6B7280]">Trades</p><p className="text-[12px] font-semibold">{g.count}</p></div>
@@ -1230,7 +1232,7 @@ function AIMentorView({ trades, onClose }) {
 
   return (
     <>
-      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+      {onClose && <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>}
       <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
         <p className="text-[12px] font-semibold mb-1">RTrade AI Mentor</p>
         <p className="text-[12px] text-[#6B7280]">Discuss your trading. Understand your patterns. Not a signal service — grounded in your own journal data.</p>
@@ -1377,14 +1379,14 @@ function RuleEngineView({ trades, onClose }) {
 
       {complianceRate !== null && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">Rule Compliance</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Rule Compliance</p>
           <p className="text-[22px] font-semibold" style={{ color: complianceRate >= 80 ? '#22C55E' : complianceRate >= 60 ? '#F59E0B' : '#EF4444' }}>{complianceRate}%</p>
           <p className="text-[12px] text-[#6B7280] mt-1">{violatingTradeIds.size} of {trades.length} trades involved a rule violation</p>
         </div>
       )}
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-3">
-        <p className="text-[10px] uppercase tracking-wide text-[#6B7280]">Your Rules</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280]">Your Rules</p>
         {loading ? <p className="text-[12px] text-[#6B7280]">Loading...</p> : rules.length === 0 ? (
           <p className="text-[12px] text-[#6B7280]">No rules set yet — add one below.</p>
         ) : (
@@ -1419,7 +1421,7 @@ function RuleEngineView({ trades, onClose }) {
 
       {violations.length > 0 && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Violations ({violations.length})</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Violations ({violations.length})</p>
           <div className="space-y-2">
             {violations.slice(0, 20).map((v, i) => (
               <div key={i} className="flex items-start gap-2.5">
@@ -1505,12 +1507,12 @@ function RiskManagementView({ trades, onClose }) {
 
   return (
     <>
-      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
+      {onClose && <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>}
 
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-[11px] text-[#EF4444]">{error}</div>}
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Starting Account Balance</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Starting Account Balance</p>
         <div className="flex gap-2">
           <input inputMode="decimal" type="number" value={balanceInput} onChange={e => setBalanceInput(e.target.value)} placeholder="e.g. 1000" className={inputCls} disabled={loading} />
           <button onClick={saveBalance} disabled={saving || loading} className="px-4 rounded-xl bg-[#6B21A8] text-black text-[12px] font-semibold shrink-0 disabled:opacity-40">{savedMsg ? <Check size={16} /> : saving ? '...' : 'Save'}</button>
@@ -1533,14 +1535,14 @@ function RiskManagementView({ trades, onClose }) {
 
       {avgRiskPct !== null && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">Average Risk per Trade</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Average Risk per Trade</p>
           <p className="text-[14px] font-semibold">{avgRiskPct.toFixed(2)}% of starting balance</p>
           <p className="text-[10px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your starting balance. A common target is staying under 1-2% per trade.</p>
         </div>
       )}
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
-        <p className="text-[10px] uppercase tracking-wide text-[#6B7280]">Position Size Calculator</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280]">Position Size Calculator</p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={calcEntry} onChange={e => setCalcEntry(e.target.value)} className={inputCls} /></Field>
           <Field label="Stop Loss"><input inputMode="decimal" type="number" placeholder="0.00" value={calcStop} onChange={e => setCalcStop(e.target.value)} className={inputCls} /></Field>
@@ -1548,8 +1550,8 @@ function RiskManagementView({ trades, onClose }) {
         <Field label="Risk % of Equity"><input inputMode="decimal" type="number" value={calcRiskPct} onChange={e => setCalcRiskPct(e.target.value)} className={inputCls} /></Field>
         {calcValid ? (
           <div className="grid grid-cols-2 gap-2 pt-1">
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">$ at Risk</p><p className="text-[12px] font-semibold">${calcRiskAmount.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] uppercase text-[#6B7280] mb-1">Position Size</p><p className="text-[12px] font-semibold">{calcPositionSize.toFixed(4)}</p></div>
+            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">$ at Risk</p><p className="text-[12px] font-semibold">${calcRiskAmount.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">Position Size</p><p className="text-[12px] font-semibold">{calcPositionSize.toFixed(4)}</p></div>
           </div>
         ) : (
           <p className="text-[10px] text-[#6B7280]">
@@ -1613,7 +1615,7 @@ function CoachView({ trades, onClose }) {
 
           {insights.length > 0 && (
             <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mt-2">Quick Insights</p>
+              <p className="text-[10px] tracking-wide text-[#6B7280] mt-2">Quick Insights</p>
               {insights.map((ins, i) => {
                 const Icon = ins.icon;
                 return (
@@ -1653,9 +1655,7 @@ function StatsView({ trades }) {
           <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
           <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
           <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
-          <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
           <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
-          <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
         </div>
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center">
           <p className="text-[12px] font-medium mb-1">No trades yet</p>
@@ -1714,9 +1714,7 @@ function StatsView({ trades }) {
         <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
         <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
         <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
-        <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
         <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
-        <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
@@ -1727,7 +1725,7 @@ function StatsView({ trades }) {
 
       {monthData.length > 0 && (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Monthly Performance</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Monthly Performance</p>
           <div className="h-40">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={monthData}>
@@ -1799,7 +1797,7 @@ function JournalView() {
   return (
     <>
       <div className="flex items-center justify-between">
-        <p className="text-[10px] uppercase tracking-wide text-[#6B7280]">{form.date === today && !entries.some(e => e.date === form.date && e.date !== today) ? "Today's Entry" : `Editing ${form.date}`}</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280]">{form.date === today && !entries.some(e => e.date === form.date && e.date !== today) ? "Today's Entry" : `Editing ${form.date}`}</p>
         {form.date !== today && <button onClick={startNew} className="text-[11px] font-medium text-[#6B21A8]">+ New entry for today</button>}
       </div>
 
@@ -1828,7 +1826,7 @@ function JournalView() {
 
       {!loading && entries.length > 0 && (
         <div className="pt-2">
-          <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-2">Past Entries</p>
+          <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Past Entries</p>
           <div className="space-y-2">
             {entries.map(e => (
               <button key={e.id} onClick={() => loadEntry(e)} className="w-full text-left rounded-xl bg-[#070509] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#0C0810]">
@@ -1934,6 +1932,8 @@ export default function App() {
     calendar: ['Calendar', 'Your Trading Calendar'],
     stats: ['Statistics', 'Your Trading Edge'],
     journal: ['Journal', 'Daily Reflection'],
+    risk: ['Risk', 'Account & Position Sizing'],
+    mentor: ['Mentor', 'Your AI Trading Mentor'],
   };
   const [eyebrow, title] = titles[active];
 
@@ -1941,7 +1941,7 @@ export default function App() {
     <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
       <header className="px-5 pt-6 pb-4 flex items-center justify-between">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.18em] text-[#6B7280] flex items-center gap-1.5">
+          <p className="text-[10px] tracking-[0.18em] text-[#6B7280] flex items-center gap-1.5">
             {eyebrow}
             <span className={`w-1.5 h-1.5 rounded-full ${connStatus === 'connected' ? 'bg-[#6B21A8]' : connStatus === 'error' ? 'bg-[#EF4444]' : 'bg-[#F59E0B]'}`} />
           </p>
@@ -1957,15 +1957,17 @@ export default function App() {
         {active === 'calendar' && <CalendarView trades={trades} />}
         {active === 'stats' && <StatsView trades={trades} />}
         {active === 'journal' && <JournalView />}
+        {active === 'risk' && <RiskManagementView trades={trades} />}
+        {active === 'mentor' && <AIMentorView trades={trades} />}
       </main>
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#030204]/95 backdrop-blur-xl border-t border-white/[0.06] px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <nav className="fixed bottom-0 left-0 right-0 bg-[#030204]/95 backdrop-blur-xl border-t border-white/[0.06] px-1 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="flex justify-between max-w-md mx-auto">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
             const isActive = active === id;
             return (
-              <button key={id} onClick={() => setActive(id)} className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-colors">
-                <Icon size={20} strokeWidth={isActive ? 2.4 : 1.8} className={isActive ? 'text-[#6B21A8]' : 'text-[#6B7280]'} />
-                <span className={`text-[8.5px] font-medium ${isActive ? 'text-[#6B21A8]' : 'text-[#6B7280]'}`}>{label}</span>
+              <button key={id} onClick={() => setActive(id)} className="flex flex-col items-center gap-0.5 px-1 py-1.5 rounded-xl transition-colors min-w-0">
+                <Icon size={17} strokeWidth={isActive ? 2.4 : 1.8} className={isActive ? 'text-[#6B21A8]' : 'text-[#6B7280]'} />
+                <span className={`text-[7.5px] font-medium whitespace-nowrap ${isActive ? 'text-[#6B21A8]' : 'text-[#6B7280]'}`}>{label}</span>
               </button>
             );
           })}
