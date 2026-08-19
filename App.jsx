@@ -191,16 +191,16 @@ const NAV_ITEMS = [
 const MARKETS = ['Forex', 'Stocks', 'Crypto', 'Futures', 'Options', 'Other'];
 const EMOTIONS = ['Calm', 'Confident', 'Anxious', 'FOMO', 'Greedy', 'Fearful', 'Revenge', 'Bored'];
 const MISTAKES = ['None', 'Early Entry', 'Late Entry', 'Moved Stop', 'Oversized', 'FOMO Entry', 'Revenge Trade', 'No Stop Loss', 'Ignored Plan'];
-const inputCls = "w-full bg-[#1F1A29] border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-sm text-[#E8E9EC] placeholder:text-[#4B5563] focus:outline-none focus:border-[#B24BF3]/50 transition-colors";
+const inputCls = "w-full bg-[#171220] border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-sm text-[#E8E9EC] placeholder:text-[#4B5563] focus:outline-none focus:border-[#8B2FD9]/50 transition-colors";
 
 function fmtMoney(n) { const sign = n > 0 ? '+' : n < 0 ? '-' : ''; return `${sign}$${Math.abs(n).toFixed(2)}`; }
 function Field({ label, children }) { return <div><label className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1.5 block">{label}</label>{children}</div>; }
 function StatCard({ label, value, positive, negative, icon: Icon, sub, compact }) {
   const color = positive ? '#22C55E' : negative ? '#EF4444' : '#E8E9EC';
   return (
-    <div className={`rounded-2xl bg-[#17131F] border border-white/[0.06] overflow-hidden min-w-0 ${compact ? 'p-3' : 'p-4'}`}>
+    <div className={`rounded-2xl bg-[#100D16] border border-white/[0.06] overflow-hidden min-w-0 ${compact ? 'p-3' : 'p-4'}`}>
       <div className="flex items-center gap-1.5 text-[#6B7280] mb-2 min-w-0">{Icon && <Icon size={13} className="shrink-0" />}<span className="text-[10px] font-medium uppercase tracking-wide truncate">{label}</span></div>
-      <p className={`font-display font-semibold tracking-tight truncate ${compact ? 'text-base' : 'text-xl'}`} style={{ color }}>{value}</p>
+      <p className={`font-display font-semibold tracking-tight truncate ${compact ? 'text-[14px]' : 'text-[18px]'}`} style={{ color }}>{value}</p>
       {sub && <p className="text-[11px] text-[#6B7280] mt-0.5">{sub}</p>}
     </div>
   );
@@ -241,14 +241,14 @@ function DashboardView({ trades, loading }) {
   return (
     <>
       {loading ? <div className="text-center py-16 text-[#6B7280] text-sm">Loading from database...</div> : !hasTrades ? (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-6 text-center">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
           <p className="text-[13px] text-[#6B7280] leading-relaxed">Log a trade on the Trades tab and this screen fills in automatically.</p>
         </div>
       ) : null}
-      <div className="rounded-2xl bg-gradient-to-br from-[#17131F] to-[#0D0A14] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-gradient-to-br from-[#100D16] to-[#08060D] border border-white/[0.06] p-5">
         <p className="text-[11px] uppercase tracking-[0.14em] text-[#6B7280] mb-1">Total P&L</p>
-        <p className="font-display text-3xl font-semibold tracking-tight" style={{ color: totalPnl > 0 ? '#22C55E' : totalPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(totalPnl)}</p>
+        <p className="font-display text-[26px] font-semibold tracking-tight" style={{ color: totalPnl > 0 ? '#22C55E' : totalPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(totalPnl)}</p>
         <div className="h-16 mt-3 -mx-1">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={equityData}>
@@ -338,7 +338,7 @@ function TradeForm({ initial, onSave, saveLabel }) {
 
   return (
     <>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Date"><input type="date" value={form.date} onChange={set('date')} className={inputCls} /></Field>
           <Field label="Market"><select value={form.market} onChange={set('market')} className={inputCls}>{MARKETS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
@@ -347,12 +347,12 @@ function TradeForm({ initial, onSave, saveLabel }) {
         <Field label="Direction">
           <div className="grid grid-cols-2 gap-2">
             {['long', 'short'].map(d => (
-              <button key={d} onClick={() => setForm(f => ({ ...f, direction: d }))} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${form.direction === d ? (d === 'long' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]') : 'bg-[#1F1A29] border-white/[0.08] text-[#6B7280]'}`}>{d === 'long' ? 'Long' : 'Short'}</button>
+              <button key={d} onClick={() => setForm(f => ({ ...f, direction: d }))} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${form.direction === d ? (d === 'long' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]') : 'bg-[#171220] border-white/[0.08] text-[#6B7280]'}`}>{d === 'long' ? 'Long' : 'Short'}</button>
             ))}
           </div>
         </Field>
       </div>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.entry} onChange={set('entry')} className={inputCls} /></Field>
           <Field label="Exit Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.exit} onChange={set('exit')} className={inputCls} /></Field>
@@ -361,22 +361,22 @@ function TradeForm({ initial, onSave, saveLabel }) {
         </div>
         {hasNumbers && (
           <div className="grid grid-cols-3 gap-2 pt-1">
-            <div className="rounded-xl bg-[#1F1A29] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">Risk</p><p className="text-sm font-semibold">${riskDollar.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#1F1A29] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">P&L</p><p className="text-sm font-semibold" style={{ color: pnl > 0 ? '#22C55E' : pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{pnl > 0 ? '+' : ''}{pnl.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#1F1A29] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">R Multiple</p><p className="text-sm font-semibold" style={{ color: rMultiple > 0 ? '#22C55E' : rMultiple < 0 ? '#EF4444' : '#E8E9EC' }}>{rMultiple.toFixed(2)}R</p></div>
+            <div className="rounded-xl bg-[#171220] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">Risk</p><p className="text-sm font-semibold">${riskDollar.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#171220] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">P&L</p><p className="text-sm font-semibold" style={{ color: pnl > 0 ? '#22C55E' : pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{pnl > 0 ? '+' : ''}{pnl.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#171220] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">R Multiple</p><p className="text-sm font-semibold" style={{ color: rMultiple > 0 ? '#22C55E' : rMultiple < 0 ? '#EF4444' : '#E8E9EC' }}>{rMultiple.toFixed(2)}R</p></div>
           </div>
         )}
       </div>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <Field label="Strategy"><input type="text" placeholder="e.g. Trend pullback" value={form.strategy} onChange={set('strategy')} className={inputCls} /></Field>
         <Field label="Setup"><input type="text" placeholder="e.g. Breakout retest" value={form.setup} onChange={set('setup')} className={inputCls} /></Field>
       </div>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <Field label="Emotion"><select value={form.emotion} onChange={set('emotion')} className={inputCls}>{EMOTIONS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
         <Field label="Mistake"><select value={form.mistake} onChange={set('mistake')} className={inputCls}>{MISTAKES.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
-        <Field label="Confidence"><div className="flex gap-2">{[1, 2, 3, 4, 5].map(n => (<button key={n} onClick={() => setForm(f => ({ ...f, confidence: n }))} className="p-1"><Star size={22} className={n <= form.confidence ? 'fill-[#B24BF3] text-[#B24BF3]' : 'text-[#3A3B40]'} /></button>))}</div></Field>
+        <Field label="Confidence"><div className="flex gap-2">{[1, 2, 3, 4, 5].map(n => (<button key={n} onClick={() => setForm(f => ({ ...f, confidence: n }))} className="p-1"><Star size={22} className={n <= form.confidence ? 'fill-[#8B2FD9] text-[#8B2FD9]' : 'text-[#3A3B40]'} /></button>))}</div></Field>
       </div>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <Field label="Notes"><textarea rows={3} placeholder="What happened? What did you see?" value={form.notes} onChange={set('notes')} className={inputCls} /></Field>
         <Field label="Screenshot">
           {form.screenshotUrl ? (
@@ -386,7 +386,7 @@ function TradeForm({ initial, onSave, saveLabel }) {
               <p className="text-[10px] text-[#6B7280] mt-1.5 text-center">Tap image to view full size</p>
             </div>
           ) : (
-            <label className="w-full bg-[#1F1A29] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-5 text-center block cursor-pointer">
+            <label className="w-full bg-[#171220] border border-dashed border-white/[0.15] rounded-xl px-3.5 py-5 text-center block cursor-pointer">
               <input type="file" accept="image/*" onChange={handleFileChange} className="hidden" disabled={uploadingShot} />
               <p className="text-xs text-[#9CA3AF]">{uploadingShot ? 'Uploading...' : 'Tap to take a photo or choose from gallery'}</p>
             </label>
@@ -397,10 +397,10 @@ function TradeForm({ initial, onSave, saveLabel }) {
       {zoomedImage && form.screenshotUrl && (
         <div onClick={() => setZoomedImage(false)} className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4" style={{ position: 'fixed' }}>
           <img src={form.screenshotUrl} alt="Trade screenshot full size" className="max-w-full max-h-full object-contain rounded-lg" />
-          <button onClick={() => setZoomedImage(false)} className="absolute top-6 right-6 bg-white/10 text-white w-9 h-9 rounded-full flex items-center justify-center text-lg">✕</button>
+          <button onClick={() => setZoomedImage(false)} className="absolute top-6 right-6 bg-white/10 text-white w-9 h-9 rounded-full flex items-center justify-center text-[16px]">✕</button>
         </div>
       )}
-      <button onClick={handleSave} disabled={!canSave || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${canSave ? 'bg-[#B24BF3] text-black' : 'bg-[#1F1A29] text-[#4B5563] border border-white/[0.06]'}`}>
+      <button onClick={handleSave} disabled={!canSave || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold transition-colors flex items-center justify-center gap-2 ${canSave ? 'bg-[#8B2FD9] text-black' : 'bg-[#171220] text-[#4B5563] border border-white/[0.06]'}`}>
         {savedMsg ? <><Check size={16} /> Saved to database</> : saving ? 'Saving...' : saveLabel}
       </button>
       {localError && <p className="text-[12px] text-[#EF4444] text-center -mt-2 flex items-center justify-center gap-1"><AlertCircle size={13} />{localError}</p>}
@@ -435,15 +435,15 @@ function LedgerView({ trades, onEdit }) {
         <input type="text" placeholder="Search symbol, strategy, notes..." value={query} onChange={e => setQuery(e.target.value)} className={inputCls + ' pl-10'} />
       </div>
       <div className="flex gap-2 overflow-x-auto pb-1 -mx-0.5 px-0.5">
-        {FILTERS.map(f => (<button key={f} onClick={() => setFilter(f)} className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${filter === f ? 'bg-[#B24BF3]/15 border-[#B24BF3]/50 text-[#B24BF3]' : 'bg-[#1F1A29] border-white/[0.08] text-[#6B7280]'}`}>{f}</button>))}
+        {FILTERS.map(f => (<button key={f} onClick={() => setFilter(f)} className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${filter === f ? 'bg-[#8B2FD9]/15 border-[#8B2FD9]/50 text-[#8B2FD9]' : 'bg-[#171220] border-white/[0.08] text-[#6B7280]'}`}>{f}</button>))}
       </div>
       <select value={sort} onChange={e => setSort(e.target.value)} className={inputCls}>{SORTS.map(s => <option key={s} value={s}>{s}</option>)}</select>
       {list.length === 0 ? (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-6 text-center"><p className="text-sm text-[#6B7280]">No trades match.</p></div>
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-6 text-center"><p className="text-sm text-[#6B7280]">No trades match.</p></div>
       ) : (
         <div className="space-y-2">
           {list.map(t => (
-            <button key={t.id} onClick={() => onEdit(t)} className="w-full text-left rounded-xl bg-[#17131F] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#1F1A29] transition-colors">
+            <button key={t.id} onClick={() => onEdit(t)} className="w-full text-left rounded-xl bg-[#100D16] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#171220] transition-colors">
               <div><p className="text-sm font-medium flex items-center gap-1.5">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'} · {t.market}</span>{t.screenshotUrl && <Camera size={12} className="text-[#6B7280] shrink-0" />}</p><p className="text-[11px] text-[#6B7280]">{t.date}</p></div>
               <div className="text-right"><p className="text-sm font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p><p className="text-[11px] text-[#6B7280]">{Number(t.rMultiple).toFixed(2)}R</p></div>
             </button>
@@ -503,17 +503,17 @@ function CalendarView({ trades }) {
 
   return (
     <>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4 grid grid-cols-3 gap-3">
-        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Month P&L</p><p className="text-base font-semibold truncate" style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(monthPnl)}</p></div>
-        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Trades</p><p className="text-base font-semibold">{monthTrades.length}</p></div>
-        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Win Rate</p><p className="text-base font-semibold">{monthWinRate.toFixed(0)}%</p></div>
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4 grid grid-cols-3 gap-3">
+        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Month P&L</p><p className="text-[14px] font-semibold truncate" style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(monthPnl)}</p></div>
+        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Trades</p><p className="text-[14px] font-semibold">{monthTrades.length}</p></div>
+        <div><p className="text-[10px] uppercase text-[#6B7280] mb-1">Win Rate</p><p className="text-[14px] font-semibold">{monthWinRate.toFixed(0)}%</p></div>
       </div>
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-2.5">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-2.5">
         <div className="flex items-center justify-between mb-1 px-1.5">
-          <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1F1A29] text-[#9CA3AF]"><ChevronLeft size={16} /></button>
+          <button onClick={() => { setCursor(new Date(year, month - 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#171220] text-[#9CA3AF]"><ChevronLeft size={16} /></button>
           <p className="text-sm font-semibold">{MONTH_NAMES[month]} {year}</p>
-          <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#1F1A29] text-[#9CA3AF]"><ChevronLeft size={16} className="rotate-180" /></button>
+          <button onClick={() => { setCursor(new Date(year, month + 1, 1)); setSelected(null); }} className="p-1.5 rounded-lg bg-[#171220] text-[#9CA3AF]"><ChevronLeft size={16} className="rotate-180" /></button>
         </div>
         <p className="text-center text-[11px] text-[#6B7280] mb-4">
           {monthTrades.length} trade{monthTrades.length !== 1 ? 's' : ''} · <span style={{ color: monthPnl > 0 ? '#22C55E' : monthPnl < 0 ? '#EF4444' : '#9CA3AF' }}>{fmtMoney(monthPnl)}</span>
@@ -527,7 +527,7 @@ function CalendarView({ trades }) {
             const ds = dateStr(d);
             const info = dayMap[ds];
             const isSelected = selected === ds;
-            const style = info ? tierStyle(info.pnl) : { bg: '#1F1A29', text: '#4B5563' };
+            const style = info ? tierStyle(info.pnl) : { bg: '#171220', text: '#4B5563' };
             const pnlLabel = info ? (info.pnl >= 0 ? `+$${info.pnl.toFixed(2)}` : `-$${Math.abs(info.pnl).toFixed(2)}`) : null;
             const pnlFontSize = pnlLabel && pnlLabel.length > 10 ? '6.5px' : pnlLabel && pnlLabel.length > 7 ? '7.5px' : '8.5px';
             return (
@@ -553,21 +553,21 @@ function CalendarView({ trades }) {
         <div className="flex items-center justify-center gap-1.5 mt-4 flex-wrap">
           <span className="text-[10px] text-[#6B7280] mr-1">Loss</span>
           {['#EF4444', '#FCA5A5', '#FEE2E2'].map(c => <div key={c} className="w-3.5 h-3.5 rounded" style={{ backgroundColor: c }} />)}
-          <div className="w-3.5 h-3.5 rounded bg-[#1F1A29] mx-1" />
+          <div className="w-3.5 h-3.5 rounded bg-[#171220] mx-1" />
           {['#DCFCE7', '#86EFAC', '#22C55E'].map(c => <div key={c} className="w-3.5 h-3.5 rounded" style={{ backgroundColor: c }} />)}
           <span className="text-[10px] text-[#6B7280] ml-1">Profit</span>
         </div>
       </div>
 
       {selected && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">{selected}</p>
           {selectedTrades.length === 0 ? (
             <p className="text-sm text-[#6B7280]">No trades this day.</p>
           ) : (
             <div className="space-y-2">
               {selectedTrades.map(t => (
-                <div key={t.id} className="rounded-xl bg-[#1F1A29] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
+                <div key={t.id} className="rounded-xl bg-[#171220] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
                   <div><p className="text-sm font-medium">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'}</span></p><p className="text-[11px] text-[#6B7280]">{t.strategy || 'No strategy noted'}</p></div>
                   <p className="text-sm font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p>
                 </div>
@@ -583,7 +583,7 @@ function CalendarView({ trades }) {
 function GroupTable({ title, groups, icon: Icon }) {
   if (groups.length === 0) return null;
   return (
-    <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+    <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
       <div className="flex items-center gap-1.5 text-[#6B7280] mb-3"><Icon size={14} /><p className="text-[11px] uppercase tracking-wide font-medium">{title}</p></div>
       <div className="space-y-2">
         {groups.map(g => (
@@ -664,21 +664,21 @@ function StrategyManager({ trades, onClose }) {
     <>
       <div className="flex items-center justify-between">
         <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
-        {subview === 'list' && <button onClick={startNew} className="text-xs font-medium text-[#B24BF3]">+ New Strategy</button>}
+        {subview === 'list' && <button onClick={startNew} className="text-xs font-medium text-[#8B2FD9]">+ New Strategy</button>}
       </div>
 
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
 
       {subview === 'add' ? (
         <>
-          <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+          <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
             <Field label="Name"><input type="text" placeholder="e.g. Trend Pullback" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className={inputCls} /></Field>
             <Field label="Description"><textarea rows={2} placeholder="One-line summary of this setup" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} className={inputCls} /></Field>
             <Field label="Expected RR"><input inputMode="decimal" type="number" placeholder="e.g. 2.5" value={form.expectedRR} onChange={e => setForm(f => ({ ...f, expectedRR: e.target.value }))} className={inputCls} /></Field>
             <Field label="Rules"><textarea rows={4} placeholder="One rule per line" value={form.rules} onChange={e => setForm(f => ({ ...f, rules: e.target.value }))} className={inputCls} /></Field>
             <Field label="Checklist"><textarea rows={4} placeholder="One checklist item per line" value={form.checklist} onChange={e => setForm(f => ({ ...f, checklist: e.target.value }))} className={inputCls} /></Field>
           </div>
-          <button onClick={handleSave} disabled={!form.name.trim() || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold ${form.name.trim() ? 'bg-[#B24BF3] text-black' : 'bg-[#1F1A29] text-[#4B5563] border border-white/[0.06]'}`}>
+          <button onClick={handleSave} disabled={!form.name.trim() || saving} className={`w-full py-3.5 rounded-xl text-sm font-semibold ${form.name.trim() ? 'bg-[#8B2FD9] text-black' : 'bg-[#171220] text-[#4B5563] border border-white/[0.06]'}`}>
             {saving ? 'Saving...' : editing ? 'Update Strategy' : 'Save Strategy'}
           </button>
           {editing && <button onClick={handleDelete} className="w-full py-3 rounded-xl text-sm font-medium text-[#EF4444] flex items-center justify-center gap-1.5"><Trash2 size={14} /> Delete Strategy</button>}
@@ -686,7 +686,7 @@ function StrategyManager({ trades, onClose }) {
       ) : loading ? (
         <p className="text-sm text-[#6B7280] text-center py-8">Loading...</p>
       ) : strategies.length === 0 ? (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-6 text-center">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No strategies saved yet</p>
           <p className="text-[13px] text-[#6B7280]">Save your setups here with rules and a checklist, and this screen will track real performance for each one automatically.</p>
         </div>
@@ -695,7 +695,7 @@ function StrategyManager({ trades, onClose }) {
           {strategies.map(s => {
             const st = statsFor(s.name);
             return (
-              <button key={s.id} onClick={() => startEdit(s)} className="w-full text-left rounded-2xl bg-[#17131F] border border-white/[0.06] p-4 active:bg-[#1F1A29]">
+              <button key={s.id} onClick={() => startEdit(s)} className="w-full text-left rounded-2xl bg-[#100D16] border border-white/[0.06] p-4 active:bg-[#171220]">
                 <div className="flex items-center justify-between mb-1">
                   <p className="text-sm font-semibold">{s.name}</p>
                   <p className="text-sm font-semibold" style={{ color: st.pnl > 0 ? '#22C55E' : st.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{st.pnl > 0 ? '+' : ''}{st.pnl.toFixed(2)}</p>
@@ -756,7 +756,7 @@ function PsychologyView({ trades, onClose }) {
       </div>
 
       {(worstEmotion || costliestMistake) && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4 space-y-2">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4 space-y-2">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Quick Insights</p>
           {worstEmotion && worstEmotion.pnl < 0 && (
             <p className="text-sm text-[#E8E9EC]">You lose the most when trading <span className="font-semibold text-[#EF4444]">{worstEmotion.key}</span> — {fmtMoney(worstEmotion.pnl)} across {worstEmotion.count} trade{worstEmotion.count !== 1 ? 's' : ''}.</p>
@@ -774,7 +774,7 @@ function PsychologyView({ trades, onClose }) {
       <GroupTable title="By Mistake" groups={byMistake} icon={AlertCircle} />
       <GroupTable title="By Confidence Level" groups={byConfidence} icon={Star} />
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
         <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Recent Mood (from Journal)</p>
         {loading ? (
           <p className="text-sm text-[#6B7280]">Loading...</p>
@@ -788,7 +788,7 @@ function PsychologyView({ trades, onClose }) {
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-[#9CA3AF]">{e.mood}</span>
                   <div className="flex gap-0.5">
-                    {[1, 2, 3, 4, 5].map(n => <Star key={n} size={11} className={n <= (e.confidence || 0) ? 'fill-[#B24BF3] text-[#B24BF3]' : 'text-[#3A3B40]'} />)}
+                    {[1, 2, 3, 4, 5].map(n => <Star key={n} size={11} className={n <= (e.confidence || 0) ? 'fill-[#8B2FD9] text-[#8B2FD9]' : 'text-[#3A3B40]'} />)}
                   </div>
                 </div>
               </div>
@@ -928,17 +928,17 @@ function WhyLosingView({ trades }) {
   const top = factors[0];
 
   if (!top) {
-    return <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">No clear, data-backed cause stands out yet. That's a good sign — or it just means we need more trades to be sure.</p></div>;
+    return <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">No clear, data-backed cause stands out yet. That's a good sign — or it just means we need more trades to be sure.</p></div>;
   }
   const pctOfLosses = totalLoss < 0 ? Math.round((top.pnl / totalLoss) * 100) : 0;
   const conf = confidenceLabel(top.count);
 
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <div>
           <p className="text-[10px] uppercase tracking-wide text-[#EF4444] mb-1">Your Biggest Performance Leak</p>
-          <p className="text-lg font-semibold">{top.name}</p>
+          <p className="text-[16px] font-semibold">{top.name}</p>
         </div>
         <EvidenceBlock title="Evidence">
           {top.count} trades · {fmtMoney(top.pnl)} net · {top.winRate.toFixed(0)}% win rate{pctOfLosses > 0 ? ` · roughly ${pctOfLosses}% of your total losses` : ''}
@@ -948,7 +948,7 @@ function WhyLosingView({ trades }) {
         <p className="text-[11px]" style={{ color: conf.color }}>{conf.label} ({top.count} trades)</p>
       </div>
       {factors.length > 1 && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Other Contributing Factors</p>
           <div className="space-y-2">
             {factors.slice(1).map((f, i) => (
@@ -968,7 +968,7 @@ function ImprovingView({ trades }) {
   const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date) || Number(a.id) - Number(b.id));
   const n = Math.min(20, Math.floor(chronological.length / 2));
   if (n < 5) {
-    return <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">Not enough trades yet for a fair before/after comparison — log more and check back.</p></div>;
+    return <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">Not enough trades yet for a fair before/after comparison — log more and check back.</p></div>;
   }
   const recent = chronological.slice(-n);
   const previous = chronological.slice(-2 * n, -n);
@@ -1006,14 +1006,14 @@ function ImprovingView({ trades }) {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5">
         <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Last {n} Trades vs Previous {n}</p>
         <Row label="Net P&L" prevVal={fmtMoney(p.pnl)} recVal={fmtMoney(r.pnl)} />
         <Row label="Win Rate" prevVal={p.winRate.toFixed(0) + '%'} recVal={r.winRate.toFixed(0) + '%'} />
         <Row label="Average R" prevVal={p.avgR.toFixed(2) + 'R'} recVal={r.avgR.toFixed(2) + 'R'} />
         <Row label="Mistake Rate" prevVal={p.mistakeRate.toFixed(0) + '%'} recVal={r.mistakeRate.toFixed(0) + '%'} higherBetter={false} />
       </div>
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5">
         <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">Coach's Verdict</p>
         <p className="text-sm leading-relaxed">{verdict}</p>
       </div>
@@ -1024,7 +1024,7 @@ function ImprovingView({ trades }) {
 function TopMistakesView({ trades }) {
   const mistakeTrades = trades.filter(t => t.mistake && t.mistake !== 'None');
   if (mistakeTrades.length === 0) {
-    return <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">No mistakes flagged in your trades yet — either great discipline, or the Mistake field isn't being used consistently.</p></div>;
+    return <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">No mistakes flagged in your trades yet — either great discipline, or the Mistake field isn't being used consistently.</p></div>;
   }
   const totalLoss = Math.abs(trades.filter(t => Number(t.pnl) < 0).reduce((a, t) => a + Number(t.pnl), 0)) || 1;
   const map = {};
@@ -1049,7 +1049,7 @@ function TopMistakesView({ trades }) {
       {list.map((m, i) => {
         const sev = severity(m.pnl, m.count);
         return (
-          <div key={m.name} className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+          <div key={m.name} className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
             <div className="flex items-center justify-between mb-1.5">
               <p className="text-sm font-semibold">#{i + 1} {m.name.toUpperCase()}</p>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: sev.color, backgroundColor: sev.color + '22' }}>{sev.label}</span>
@@ -1076,15 +1076,15 @@ function EdgeLeakView({ trades }) {
   const edge = list[0];
   const leak = [...list].reverse()[0];
 
-  if (!edge) return <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">Not enough repeated combinations yet — log more trades with consistent strategy names to surface your edge.</p></div>;
+  if (!edge) return <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5"><p className="text-sm text-[#6B7280]">Not enough repeated combinations yet — log more trades with consistent strategy names to surface your edge.</p></div>;
 
   const Card = ({ title, g, positive }) => {
     if (!g) return null;
     const conf = confidenceLabel(g.count);
     return (
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5">
         <p className="text-[10px] uppercase tracking-wide mb-1" style={{ color: positive ? '#22C55E' : '#EF4444' }}>{title}</p>
-        <p className="text-base font-semibold mb-3">{g.key}</p>
+        <p className="text-[14px] font-semibold mb-3">{g.key}</p>
         <div className="grid grid-cols-3 gap-2">
           <div><p className="text-[10px] text-[#6B7280]">Trades</p><p className="text-sm font-semibold">{g.count}</p></div>
           <div><p className="text-[10px] text-[#6B7280]">Win Rate</p><p className="text-sm font-semibold">{((g.wins / g.count) * 100).toFixed(0)}%</p></div>
@@ -1158,7 +1158,7 @@ function renderFormatted(text) {
     );
     if (headingMatch) {
       const level = headingMatch[1].length;
-      const sizeCls = level === 1 ? 'text-base font-bold' : level === 2 ? 'text-[15px] font-bold' : 'text-sm font-semibold';
+      const sizeCls = level === 1 ? 'text-[14px] font-bold' : level === 2 ? 'text-[15px] font-bold' : 'text-sm font-semibold';
       return <div key={li} className={`${sizeCls} mt-2 mb-1`}>{inline(headingMatch[2])}</div>;
     }
     return (
@@ -1231,29 +1231,29 @@ function AIMentorView({ trades, onClose }) {
   return (
     <>
       <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
-      <div className="rounded-2xl bg-gradient-to-br from-[#17131F] to-[#0D0A14] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-gradient-to-br from-[#100D16] to-[#08060D] border border-white/[0.06] p-5">
         <p className="text-sm font-semibold mb-1">RTrade AI Mentor</p>
         <p className="text-[12px] text-[#6B7280]">Discuss your trading. Understand your patterns. Not a signal service — grounded in your own journal data.</p>
       </div>
 
       <div className="flex gap-2 overflow-x-auto pb-1">
         {MENTOR_TOPICS.map(t => (
-          <button key={t} onClick={() => setTopic(t)} className={`shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-medium border ${topic === t ? 'bg-[#B24BF3]/15 border-[#B24BF3]/50 text-[#B24BF3]' : 'bg-[#1F1A29] border-white/[0.08] text-[#6B7280]'}`}>{t}</button>
+          <button key={t} onClick={() => setTopic(t)} className={`shrink-0 px-3.5 py-1.5 rounded-lg text-xs font-medium border ${topic === t ? 'bg-[#8B2FD9]/15 border-[#8B2FD9]/50 text-[#8B2FD9]' : 'bg-[#171220] border-white/[0.08] text-[#6B7280]'}`}>{t}</button>
         ))}
       </div>
 
       <div className="space-y-3">
         {messages.length === 0 && (
-          <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+          <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
             <p className="text-sm text-[#6B7280]">Ask something specific — e.g. "Why do I keep losing on short trades?" or "Is my risk sizing consistent?" The Mentor will use your real {topic.toLowerCase()} data to answer.</p>
           </div>
         )}
         {messages.map((m, i) => (
-          <div key={i} className={`rounded-2xl p-4 max-w-[88%] ${m.role === 'user' ? 'bg-[#B24BF3]/15 ml-auto' : 'bg-[#17131F] border border-white/[0.06]'}`}>
+          <div key={i} className={`rounded-2xl p-4 max-w-[88%] ${m.role === 'user' ? 'bg-[#8B2FD9]/15 ml-auto' : 'bg-[#100D16] border border-white/[0.06]'}`}>
             <p className="text-sm leading-relaxed">{renderFormatted(m.content)}</p>
           </div>
         ))}
-        {sending && <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4 max-w-[88%]"><p className="text-sm text-[#6B7280]">Thinking...</p></div>}
+        {sending && <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4 max-w-[88%]"><p className="text-sm text-[#6B7280]">Thinking...</p></div>}
       </div>
 
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
@@ -1267,7 +1267,7 @@ function AIMentorView({ trades, onClose }) {
           placeholder="Ask your mentor..."
           className={inputCls}
         />
-        <button onClick={sendMessage} disabled={sending || !input.trim()} className="px-4 rounded-xl bg-[#B24BF3] text-black text-sm font-semibold shrink-0 disabled:opacity-40">Send</button>
+        <button onClick={sendMessage} disabled={sending || !input.trim()} className="px-4 rounded-xl bg-[#8B2FD9] text-black text-sm font-semibold shrink-0 disabled:opacity-40">Send</button>
       </div>
     </>
   );
@@ -1376,26 +1376,26 @@ function RuleEngineView({ trades, onClose }) {
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
 
       {complianceRate !== null && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Rule Compliance</p>
-          <p className="text-3xl font-semibold" style={{ color: complianceRate >= 80 ? '#22C55E' : complianceRate >= 60 ? '#F59E0B' : '#EF4444' }}>{complianceRate}%</p>
+          <p className="text-[26px] font-semibold" style={{ color: complianceRate >= 80 ? '#22C55E' : complianceRate >= 60 ? '#F59E0B' : '#EF4444' }}>{complianceRate}%</p>
           <p className="text-[12px] text-[#6B7280] mt-1">{violatingTradeIds.size} of {trades.length} trades involved a rule violation</p>
         </div>
       )}
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-3">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-3">
         <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">Your Rules</p>
         {loading ? <p className="text-sm text-[#6B7280]">Loading...</p> : rules.length === 0 ? (
           <p className="text-sm text-[#6B7280]">No rules set yet — add one below.</p>
         ) : (
           rules.map(r => (
-            <div key={r.id} className="flex items-center justify-between rounded-xl bg-[#1F1A29] border border-white/[0.06] px-3.5 py-3">
+            <div key={r.id} className="flex items-center justify-between rounded-xl bg-[#171220] border border-white/[0.06] px-3.5 py-3">
               <div>
                 <p className="text-sm font-medium">{RULE_TYPES[r.ruleType].label}</p>
                 <p className="text-[12px] text-[#6B7280]">{RULE_TYPES[r.ruleType].unit === '$' ? '$' : ''}{r.threshold}{RULE_TYPES[r.ruleType].unit !== '$' ? ' ' + RULE_TYPES[r.ruleType].unit : ''}</p>
               </div>
               <div className="flex items-center gap-3">
-                <button onClick={() => toggleRule(r)} className={`w-10 h-6 rounded-full relative transition-colors ${r.enabled ? 'bg-[#B24BF3]' : 'bg-[#3A3B40]'}`}>
+                <button onClick={() => toggleRule(r)} className={`w-10 h-6 rounded-full relative transition-colors ${r.enabled ? 'bg-[#8B2FD9]' : 'bg-[#3A3B40]'}`}>
                   <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${r.enabled ? 'left-[18px]' : 'left-0.5'}`} />
                 </button>
                 <button onClick={() => deleteRule(r)}><Trash2 size={15} className="text-[#EF4444]" /></button>
@@ -1411,14 +1411,14 @@ function RuleEngineView({ trades, onClose }) {
             </select>
             <div className="flex gap-2">
               <input inputMode="decimal" type="number" placeholder={RULE_TYPES[newType].placeholder} value={newThreshold} onChange={e => setNewThreshold(e.target.value)} className={inputCls} />
-              <button onClick={handleAddRule} disabled={!newThreshold || adding} className="px-4 rounded-xl bg-[#B24BF3] text-black text-sm font-semibold shrink-0 disabled:opacity-40">Add</button>
+              <button onClick={handleAddRule} disabled={!newThreshold || adding} className="px-4 rounded-xl bg-[#8B2FD9] text-black text-sm font-semibold shrink-0 disabled:opacity-40">Add</button>
             </div>
           </div>
         )}
       </div>
 
       {violations.length > 0 && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Violations ({violations.length})</p>
           <div className="space-y-2">
             {violations.slice(0, 20).map((v, i) => (
@@ -1509,11 +1509,11 @@ function RiskManagementView({ trades, onClose }) {
 
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5">
         <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Starting Account Balance</p>
         <div className="flex gap-2">
           <input inputMode="decimal" type="number" value={balanceInput} onChange={e => setBalanceInput(e.target.value)} placeholder="e.g. 1000" className={inputCls} disabled={loading} />
-          <button onClick={saveBalance} disabled={saving || loading} className="px-4 rounded-xl bg-[#B24BF3] text-black text-sm font-semibold shrink-0 disabled:opacity-40">{savedMsg ? <Check size={16} /> : saving ? '...' : 'Save'}</button>
+          <button onClick={saveBalance} disabled={saving || loading} className="px-4 rounded-xl bg-[#8B2FD9] text-black text-sm font-semibold shrink-0 disabled:opacity-40">{savedMsg ? <Check size={16} /> : saving ? '...' : 'Save'}</button>
         </div>
         <p className="text-[11px] text-[#6B7280] mt-2">This is your account size before any of your logged trades — used to calculate equity, drawdown %, and position sizing.</p>
       </div>
@@ -1532,14 +1532,14 @@ function RiskManagementView({ trades, onClose }) {
       </div>
 
       {avgRiskPct !== null && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-1">Average Risk per Trade</p>
-          <p className="text-lg font-semibold">{avgRiskPct.toFixed(2)}% of starting balance</p>
+          <p className="text-[16px] font-semibold">{avgRiskPct.toFixed(2)}% of starting balance</p>
           <p className="text-[11px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your starting balance. A common target is staying under 1-2% per trade.</p>
         </div>
       )}
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">Position Size Calculator</p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={calcEntry} onChange={e => setCalcEntry(e.target.value)} className={inputCls} /></Field>
@@ -1548,8 +1548,8 @@ function RiskManagementView({ trades, onClose }) {
         <Field label="Risk % of Equity"><input inputMode="decimal" type="number" value={calcRiskPct} onChange={e => setCalcRiskPct(e.target.value)} className={inputCls} /></Field>
         {calcValid ? (
           <div className="grid grid-cols-2 gap-2 pt-1">
-            <div className="rounded-xl bg-[#1F1A29] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">$ at Risk</p><p className="text-sm font-semibold">${calcRiskAmount.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#1F1A29] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">Position Size</p><p className="text-sm font-semibold">{calcPositionSize.toFixed(4)}</p></div>
+            <div className="rounded-xl bg-[#171220] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">$ at Risk</p><p className="text-sm font-semibold">${calcRiskAmount.toFixed(2)}</p></div>
+            <div className="rounded-xl bg-[#171220] border border-white/[0.06] p-3 text-center"><p className="text-[10px] uppercase text-[#6B7280] mb-1">Position Size</p><p className="text-sm font-semibold">{calcPositionSize.toFixed(4)}</p></div>
           </div>
         ) : (
           <p className="text-[11px] text-[#6B7280]">
@@ -1578,7 +1578,7 @@ function CoachView({ trades, onClose }) {
     return (
       <>
         <button onClick={() => setMode('overview')} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Coach</button>
-        <p className="text-lg font-semibold">{activeMode.label}</p>
+        <p className="text-[16px] font-semibold">{activeMode.label}</p>
         {mode === 'why' && <WhyLosingView trades={trades} />}
         {mode === 'improving' && <ImprovingView trades={trades} />}
         {mode === 'mistakes' && <TopMistakesView trades={trades} />}
@@ -1590,16 +1590,16 @@ function CoachView({ trades, onClose }) {
   return (
     <>
       <button onClick={onClose} className="flex items-center gap-1 text-sm text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>
-      <div className="rounded-2xl bg-gradient-to-br from-[#17131F] to-[#0D0A14] border border-white/[0.06] p-5">
+      <div className="rounded-2xl bg-gradient-to-br from-[#100D16] to-[#08060D] border border-white/[0.06] p-5">
         <div className="flex items-center gap-2 mb-1">
-          <div className="w-7 h-7 rounded-full bg-[#B24BF3]/15 flex items-center justify-center"><Flame size={14} className="text-[#B24BF3]" /></div>
+          <div className="w-7 h-7 rounded-full bg-[#8B2FD9]/15 flex items-center justify-center"><Flame size={14} className="text-[#8B2FD9]" /></div>
           <p className="text-sm font-semibold">Trading Coach</p>
         </div>
         <p className="text-[12px] text-[#6B7280]">A trading intelligence engine built entirely from your own journal data — no predictions, no guesswork.</p>
       </div>
 
       {trades.length < 5 ? (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-6 text-center">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">Not enough data yet</p>
           <p className="text-[13px] text-[#6B7280]">Log at least 5 trades and the Coach will start finding real patterns in how you trade.</p>
         </div>
@@ -1607,7 +1607,7 @@ function CoachView({ trades, onClose }) {
         <>
           <div className="grid grid-cols-2 gap-2">
             {modes.map(m => (
-              <button key={m.id} onClick={() => setMode(m.id)} className="py-3.5 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#E8E9EC] text-left px-3.5">{m.label}</button>
+              <button key={m.id} onClick={() => setMode(m.id)} className="py-3.5 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#E8E9EC] text-left px-3.5">{m.label}</button>
             ))}
           </div>
 
@@ -1617,9 +1617,9 @@ function CoachView({ trades, onClose }) {
               {insights.map((ins, i) => {
                 const Icon = ins.icon;
                 return (
-                  <div key={i} className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4 flex items-start gap-3">
-                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${ins.positive ? 'bg-[#B24BF3]/15' : 'bg-[#EF4444]/15'}`}>
-                      <Icon size={14} className={ins.positive ? 'text-[#B24BF3]' : 'text-[#EF4444]'} />
+                  <div key={i} className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4 flex items-start gap-3">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${ins.positive ? 'bg-[#8B2FD9]/15' : 'bg-[#EF4444]/15'}`}>
+                      <Icon size={14} className={ins.positive ? 'text-[#8B2FD9]' : 'text-[#EF4444]'} />
                     </div>
                     <p className="text-sm text-[#E8E9EC] leading-relaxed">{ins.text}</p>
                   </div>
@@ -1650,14 +1650,14 @@ function StatsView({ trades }) {
     return (
       <>
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
-          <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
-          <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
-          <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
-          <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
-          <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
+          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
+          <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
+          <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
+          <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
+          <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
+          <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
         </div>
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-6 text-center">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-6 text-center">
           <p className="text-sm font-medium mb-1">No trades yet</p>
           <p className="text-[13px] text-[#6B7280] leading-relaxed">Log some trades and this screen will break down your edge — by strategy, by market, and over time.</p>
         </div>
@@ -1711,12 +1711,12 @@ function StatsView({ trades }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-2">
-        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
-        <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
-        <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
-        <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
-        <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
-        <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#17131F] border border-white/[0.06] text-[#B24BF3] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
+        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
+        <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
+        <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
+        <button onClick={() => setShowMentor(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><BookOpen size={14} /> AI Mentor</button>
+        <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
+        <button onClick={() => setShowRisk(true)} className="py-3 rounded-xl text-[13px] font-medium bg-[#100D16] border border-white/[0.06] text-[#8B2FD9] flex flex-col items-center justify-center gap-1"><TrendingDown size={14} /> Risk Mgmt</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
@@ -1726,7 +1726,7 @@ function StatsView({ trades }) {
       </div>
 
       {monthData.length > 0 && (
-        <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-4">
+        <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-4">
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-3">Monthly Performance</p>
           <div className="h-40">
             <ResponsiveContainer width="100%" height="100%">
@@ -1800,29 +1800,29 @@ function JournalView() {
     <>
       <div className="flex items-center justify-between">
         <p className="text-[11px] uppercase tracking-wide text-[#6B7280]">{form.date === today && !entries.some(e => e.date === form.date && e.date !== today) ? "Today's Entry" : `Editing ${form.date}`}</p>
-        {form.date !== today && <button onClick={startNew} className="text-xs font-medium text-[#B24BF3]">+ New entry for today</button>}
+        {form.date !== today && <button onClick={startNew} className="text-xs font-medium text-[#8B2FD9]">+ New entry for today</button>}
       </div>
 
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444]">{error}</div>}
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <Field label="Date"><input type="date" value={form.date} onChange={set('date')} className={inputCls} /></Field>
         <Field label="Mood"><select value={form.mood} onChange={set('mood')} className={inputCls}>{MOODS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
-        <Field label="Confidence"><div className="flex gap-2">{[1, 2, 3, 4, 5].map(n => (<button key={n} onClick={() => setForm(f => ({ ...f, confidence: n }))} className="p-1"><Star size={22} className={n <= (form.confidence || 0) ? 'fill-[#B24BF3] text-[#B24BF3]' : 'text-[#3A3B40]'} /></button>))}</div></Field>
+        <Field label="Confidence"><div className="flex gap-2">{[1, 2, 3, 4, 5].map(n => (<button key={n} onClick={() => setForm(f => ({ ...f, confidence: n }))} className="p-1"><Star size={22} className={n <= (form.confidence || 0) ? 'fill-[#8B2FD9] text-[#8B2FD9]' : 'text-[#3A3B40]'} /></button>))}</div></Field>
       </div>
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <Field label="Pre-Market Plan"><textarea rows={3} placeholder="What's your plan for today?" value={form.preMarketPlan || ''} onChange={set('preMarketPlan')} className={inputCls} /></Field>
         <Field label="Post-Market Review"><textarea rows={3} placeholder="How did the day actually go?" value={form.postMarketReview || ''} onChange={set('postMarketReview')} className={inputCls} /></Field>
       </div>
 
-      <div className="rounded-2xl bg-[#17131F] border border-white/[0.06] p-5 space-y-4">
+      <div className="rounded-2xl bg-[#100D16] border border-white/[0.06] p-5 space-y-4">
         <Field label="Lessons Learned"><textarea rows={2} value={form.lessonsLearned || ''} onChange={set('lessonsLearned')} className={inputCls} /></Field>
         <Field label="Mistakes"><textarea rows={2} value={form.mistakes || ''} onChange={set('mistakes')} className={inputCls} /></Field>
         <Field label="Tomorrow's Focus"><textarea rows={2} value={form.tomorrowFocus || ''} onChange={set('tomorrowFocus')} className={inputCls} /></Field>
       </div>
 
-      <button onClick={handleSave} disabled={saving} className="w-full py-3.5 rounded-xl text-sm font-semibold bg-[#B24BF3] text-black flex items-center justify-center gap-2">
+      <button onClick={handleSave} disabled={saving} className="w-full py-3.5 rounded-xl text-sm font-semibold bg-[#8B2FD9] text-black flex items-center justify-center gap-2">
         {savedMsg ? <><Check size={16} /> Saved</> : saving ? 'Saving...' : form.id ? 'Update Entry' : 'Save Entry'}
       </button>
 
@@ -1831,7 +1831,7 @@ function JournalView() {
           <p className="text-[11px] uppercase tracking-wide text-[#6B7280] mb-2">Past Entries</p>
           <div className="space-y-2">
             {entries.map(e => (
-              <button key={e.id} onClick={() => loadEntry(e)} className="w-full text-left rounded-xl bg-[#17131F] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#1F1A29]">
+              <button key={e.id} onClick={() => loadEntry(e)} className="w-full text-left rounded-xl bg-[#100D16] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#171220]">
                 <div><p className="text-sm font-medium">{e.date}</p><p className="text-[11px] text-[#6B7280]">{e.mood} · Confidence {e.confidence}/5</p></div>
                 <ChevronLeft size={16} className="rotate-180 text-[#6B7280]" />
               </button>
@@ -1861,8 +1861,8 @@ function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-2 mb-1">
-        <button onClick={() => setSubview('add')} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${subview === 'add' ? 'bg-[#B24BF3]/15 border-[#B24BF3]/50 text-[#B24BF3]' : 'bg-[#1F1A29] border-white/[0.08] text-[#6B7280]'}`}>Add Trade</button>
-        <button onClick={() => setSubview('list')} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${subview === 'list' ? 'bg-[#B24BF3]/15 border-[#B24BF3]/50 text-[#B24BF3]' : 'bg-[#1F1A29] border-white/[0.08] text-[#6B7280]'}`}>All Trades ({trades.length})</button>
+        <button onClick={() => setSubview('add')} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${subview === 'add' ? 'bg-[#8B2FD9]/15 border-[#8B2FD9]/50 text-[#8B2FD9]' : 'bg-[#171220] border-white/[0.08] text-[#6B7280]'}`}>Add Trade</button>
+        <button onClick={() => setSubview('list')} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${subview === 'list' ? 'bg-[#8B2FD9]/15 border-[#8B2FD9]/50 text-[#8B2FD9]' : 'bg-[#171220] border-white/[0.08] text-[#6B7280]'}`}>All Trades ({trades.length})</button>
       </div>
       {dbError && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-xs text-[#EF4444] flex items-start gap-2"><AlertCircle size={14} className="shrink-0 mt-0.5" />{dbError}</div>}
       {subview === 'add' ? <TradeForm initial={{}} saveLabel="Save Trade" onSave={onAdd} /> : <LedgerView trades={trades} onEdit={setEditingTrade} />}
@@ -1938,17 +1938,17 @@ export default function App() {
   const [eyebrow, title] = titles[active];
 
   return (
-    <div className="min-h-screen w-full bg-[#0A0910] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
+    <div className="min-h-screen w-full bg-[#050409] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
       <header className="px-5 pt-6 pb-4 flex items-center justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-[0.18em] text-[#6B7280] flex items-center gap-1.5">
             {eyebrow}
-            <span className={`w-1.5 h-1.5 rounded-full ${connStatus === 'connected' ? 'bg-[#B24BF3]' : connStatus === 'error' ? 'bg-[#EF4444]' : 'bg-[#F59E0B]'}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${connStatus === 'connected' ? 'bg-[#8B2FD9]' : connStatus === 'error' ? 'bg-[#EF4444]' : 'bg-[#F59E0B]'}`} />
           </p>
-          <h1 className="font-display text-xl font-semibold tracking-tight mt-0.5">{title}</h1>
+          <h1 className="font-display text-[18px] font-semibold tracking-tight mt-0.5">{title}</h1>
         </div>
-        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#3B0764] to-[#0A0910] border border-[#B24BF3]/30 flex items-center justify-center">
-          <Flame size={16} className="text-[#B24BF3]" />
+        <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2C0553] to-[#050409] border border-[#8B2FD9]/30 flex items-center justify-center">
+          <Flame size={16} className="text-[#8B2FD9]" />
         </div>
       </header>
       <main className="flex-1 px-5 pb-28 space-y-4 overflow-y-auto">
@@ -1958,14 +1958,14 @@ export default function App() {
         {active === 'stats' && <StatsView trades={trades} />}
         {active === 'journal' && <JournalView />}
       </main>
-      <nav className="fixed bottom-0 left-0 right-0 bg-[#0A0910]/95 backdrop-blur-xl border-t border-white/[0.06] px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <nav className="fixed bottom-0 left-0 right-0 bg-[#050409]/95 backdrop-blur-xl border-t border-white/[0.06] px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <div className="flex justify-between max-w-md mx-auto">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
             const isActive = active === id;
             return (
               <button key={id} onClick={() => setActive(id)} className="flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl transition-colors">
-                <Icon size={20} strokeWidth={isActive ? 2.4 : 1.8} className={isActive ? 'text-[#B24BF3]' : 'text-[#6B7280]'} />
-                <span className={`text-[10px] font-medium ${isActive ? 'text-[#B24BF3]' : 'text-[#6B7280]'}`}>{label}</span>
+                <Icon size={20} strokeWidth={isActive ? 2.4 : 1.8} className={isActive ? 'text-[#8B2FD9]' : 'text-[#6B7280]'} />
+                <span className={`text-[10px] font-medium ${isActive ? 'text-[#8B2FD9]' : 'text-[#6B7280]'}`}>{label}</span>
               </button>
             );
           })}
