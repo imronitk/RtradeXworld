@@ -1577,6 +1577,258 @@ function RuleEngineView({ trades, onClose }) {
   );
 }
 
+// ===== MULTI-ASSET POSITION SIZE CALCULATOR =====
+const FX_BROKERS = ['XM', 'Exness', 'Vantage', 'Elfin', 'WinproFx', 'Zuperior'];
+const CRYPTO_EXCHANGES = ['Delta Exchange', 'CoinDCX', 'CoinSwitch'];
+
+const FOREX_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/GBP', 'EUR/JPY', 'EUR/CHF', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'GBP/JPY', 'GBP/CHF', 'GBP/AUD', 'GBP/CAD', 'GBP/NZD', 'AUD/JPY', 'AUD/NZD', 'AUD/CAD', 'AUD/CHF', 'CAD/JPY', 'CHF/JPY', 'NZD/JPY'];
+
+const COMMODITY_PRESETS = {
+  'XAU/USD': { name: 'Gold', valuePerPoint: 100, step: 0.01, min: 0.01, max: 100 },
+  'XAG/USD': { name: 'Silver', valuePerPoint: 5000, step: 0.01, min: 0.01, max: 100 },
+  'WTI': { name: 'Crude Oil (WTI)', valuePerPoint: 1000, step: 0.01, min: 0.01, max: 100 },
+  'BRENT': { name: 'Brent Crude', valuePerPoint: 1000, step: 0.01, min: 0.01, max: 100 },
+  'NATGAS': { name: 'Natural Gas', valuePerPoint: 10000, step: 0.01, min: 0.01, max: 100 },
+  'COPPER': { name: 'Copper', valuePerPoint: 25000, step: 0.01, min: 0.01, max: 100 },
+};
+const INDEX_PRESETS = {
+  'US30': { name: 'Dow Jones', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'US100': { name: 'Nasdaq 100', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'US500': { name: 'S&P 500', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'GER40': { name: 'DAX 40', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'UK100': { name: 'FTSE 100', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'JPN225': { name: 'Nikkei 225', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'AUS200': { name: 'ASX 200', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'FRA40': { name: 'CAC 40', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+  'EU50': { name: 'Euro Stoxx 50', valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 },
+};
+const RISK_PRESETS = [0.25, 0.5, 1, 1.5, 2, 3];
+
+function PositionSizeCalculator({ startingBalance, onClose }) {
+  const [stage, setStage] = useState('market'); // market | fxBroker | cryptoComingSoon | assetClass | inputs
+  const [broker, setBroker] = useState(null);
+  const [assetClass, setAssetClass] = useState(null);
+  const [symbol, setSymbol] = useState('');
+  const [customSymbol, setCustomSymbol] = useState('');
+
+  const [accountBalance, setAccountBalance] = useState(startingBalance > 0 ? String(startingBalance.toFixed(2)) : '');
+  const [riskPct, setRiskPct] = useState('1');
+  const [direction, setDirection] = useState('buy');
+  const [entry, setEntry] = useState('');
+  const [stopLoss, setStopLoss] = useState('');
+  const [takeProfit, setTakeProfit] = useState('');
+  const [conversionRate, setConversionRate] = useState('1');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showCalcDetail, setShowCalcDetail] = useState(false);
+
+  const activeSymbol = symbol === 'custom' ? customSymbol : symbol;
+
+  function defaultSpecFor(cls, sym) {
+    if (cls === 'Forex') {
+      const isJpy = sym.includes('JPY');
+      return { unitLabel: 'Lots', pointLabel: isJpy ? 'pip (0.01)' : 'pip (0.0001)', valuePerPoint: 100000, step: 0.01, min: 0.01, max: 100, methodLabel: 'Pip Value Method' };
+    }
+    if (cls === 'Commodities') {
+      const p = COMMODITY_PRESETS[sym] || { valuePerPoint: 100, step: 0.01, min: 0.01, max: 100 };
+      return { unitLabel: 'Lots', pointLabel: '$1.00 move', valuePerPoint: p.valuePerPoint, step: p.step, min: p.min, max: p.max, methodLabel: 'Tick/Contract Value Method' };
+    }
+    if (cls === 'Indices') {
+      const p = INDEX_PRESETS[sym] || { valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 };
+      return { unitLabel: 'Contracts', pointLabel: '1 point', valuePerPoint: p.valuePerPoint, step: p.step, min: p.min, max: p.max, methodLabel: 'Point Value Method' };
+    }
+    return { unitLabel: 'Units', pointLabel: '$1.00 move', valuePerPoint: 1, step: 0.01, min: 0.01, max: 10000, methodLabel: 'Custom CFD Specification' };
+  }
+
+  const [spec, setSpec] = useState(defaultSpecFor('Forex', ''));
+  useEffect(() => { if (activeSymbol) setSpec(defaultSpecFor(assetClass, activeSymbol)); }, [assetClass, activeSymbol]);
+
+  const balN = parseFloat(accountBalance);
+  const riskPctN = parseFloat(riskPct);
+  const entryN = parseFloat(entry);
+  const stopN = parseFloat(stopLoss);
+  const tpN = parseFloat(takeProfit);
+  const convN = parseFloat(conversionRate) || 1;
+
+  const directionValid = !isNaN(entryN) && !isNaN(stopN) && (
+    direction === 'buy' ? stopN < entryN : stopN > entryN
+  );
+  const tpProvided = takeProfit !== '' && !isNaN(tpN);
+  const tpDirectionValid = !tpProvided || (direction === 'buy' ? tpN > entryN : tpN < entryN);
+
+  const inputsReady = !isNaN(balN) && balN > 0 && !isNaN(riskPctN) && riskPctN > 0 && !isNaN(entryN) && !isNaN(stopN) && entryN !== stopN;
+
+  let result = null;
+  if (inputsReady && directionValid && tpDirectionValid) {
+    const riskAmount = balN * (riskPctN / 100);
+    const priceDistance = Math.abs(entryN - stopN);
+    const riskPerUnit = priceDistance * spec.valuePerPoint * convN;
+    const rawSize = riskPerUnit > 0 ? riskAmount / riskPerUnit : 0;
+    let finalSize = Math.floor(rawSize / spec.step) * spec.step;
+    finalSize = Math.min(Math.max(finalSize, 0), spec.max);
+    finalSize = Number(finalSize.toFixed(6));
+    const actualRisk = finalSize * riskPerUnit;
+    const withinLimit = actualRisk <= riskAmount + 0.005;
+    let potentialProfit = null, rr = null;
+    if (tpProvided) {
+      const tpDistance = Math.abs(tpN - entryN);
+      potentialProfit = finalSize * tpDistance * spec.valuePerPoint * convN;
+      rr = actualRisk > 0 ? potentialProfit / actualRisk : null;
+    }
+    result = { riskAmount, priceDistance, riskPerUnit, rawSize, finalSize, actualRisk, withinLimit, potentialProfit, rr, belowMin: finalSize < spec.min };
+  }
+
+  function reset() { setStage('market'); setBroker(null); setAssetClass(null); setSymbol(''); setCustomSymbol(''); }
+
+  return (
+    <div className="fixed inset-0 z-30 bg-[#030204] overflow-y-auto">
+      <div className="px-5 pt-6 pb-28 space-y-4 max-w-md mx-auto">
+        <div className="flex items-center justify-between">
+          <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Close</button>
+          {stage !== 'market' && <button onClick={reset} className="text-[11px] text-[#6B7280]">Start Over</button>}
+        </div>
+        <p className="font-display text-[16px] font-semibold">Position Size Calculator</p>
+
+        {stage === 'market' && (
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Choose Market</p>
+            <button onClick={() => setStage('fxBroker')} className="w-full text-left py-3.5 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px] font-medium">Foreign Exchange</button>
+            <button onClick={() => setStage('cryptoComingSoon')} className="w-full text-left py-3.5 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px] font-medium">Indian Crypto Futures Exchange</button>
+          </div>
+        )}
+
+        {stage === 'fxBroker' && (
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Select Broker</p>
+            {FX_BROKERS.map(b => (
+              <button key={b} onClick={() => { setBroker(b); setStage('assetClass'); }} className="w-full text-left py-3 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px]">{b}</button>
+            ))}
+          </div>
+        )}
+
+        {stage === 'cryptoComingSoon' && (
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center space-y-3">
+            <p className="text-[10px] tracking-wide text-[#6B7280]">Indian Crypto Futures Exchange</p>
+            {CRYPTO_EXCHANGES.map(x => (
+              <div key={x} className="py-3 px-4 rounded-xl bg-[#0C0810] border border-white/[0.06] text-[13px] text-[#6B7280]">{x} <span className="text-[10px]">— coming soon</span></div>
+            ))}
+            <p className="text-[11px] text-[#6B7280]">Crypto futures position sizing (Delta, CoinDCX, CoinSwitch) is planned as its own upgrade. Foreign Exchange is fully supported now.</p>
+          </div>
+        )}
+
+        {stage === 'assetClass' && (
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">{broker} — Choose Asset Class</p>
+            {['Forex', 'Commodities', 'Indices', 'CFD'].map(c => (
+              <button key={c} onClick={() => { setAssetClass(c); setSymbol(''); setStage('inputs'); }} className="w-full text-left py-3 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px]">{c}</button>
+            ))}
+          </div>
+        )}
+
+        {stage === 'inputs' && (
+          <>
+            <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
+              <p className="text-[10px] tracking-wide text-[#6B7280]">{broker} · {assetClass}</p>
+              <Field label="Symbol">
+                <select value={symbol} onChange={e => setSymbol(e.target.value)} className={inputCls}>
+                  <option value="">Select symbol...</option>
+                  {assetClass === 'Forex' && FOREX_PAIRS.map(p => <option key={p} value={p}>{p}</option>)}
+                  {assetClass === 'Commodities' && Object.entries(COMMODITY_PRESETS).map(([k, v]) => <option key={k} value={k}>{k} — {v.name}</option>)}
+                  {assetClass === 'Indices' && Object.entries(INDEX_PRESETS).map(([k, v]) => <option key={k} value={k}>{k} — {v.name}</option>)}
+                  <option value="custom">Custom / Other</option>
+                </select>
+              </Field>
+              {symbol === 'custom' && <Field label="Custom Symbol"><input type="text" value={customSymbol} onChange={e => setCustomSymbol(e.target.value)} placeholder="e.g. XPTUSD" className={inputCls} /></Field>}
+
+              {activeSymbol && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Account Balance"><input inputMode="decimal" type="number" value={accountBalance} onChange={e => setAccountBalance(e.target.value)} className={inputCls} /></Field>
+                    <Field label="Direction">
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button onClick={() => setDirection('buy')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${direction === 'buy' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>Buy</button>
+                        <button onClick={() => setDirection('sell')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${direction === 'sell' ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>Sell</button>
+                      </div>
+                    </Field>
+                  </div>
+
+                  <Field label="Risk">
+                    <div className="flex gap-1.5 flex-wrap mb-2">
+                      {RISK_PRESETS.map(r => (
+                        <button key={r} onClick={() => setRiskPct(String(r))} className={`px-3 py-1.5 rounded-lg text-[11px] font-medium border ${riskPct === String(r) ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>{r}%</button>
+                      ))}
+                    </div>
+                    <input inputMode="decimal" type="number" value={riskPct} onChange={e => setRiskPct(e.target.value)} placeholder="Custom %" className={inputCls} />
+                  </Field>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Entry Price"><input inputMode="decimal" type="number" value={entry} onChange={e => setEntry(e.target.value)} className={inputCls} /></Field>
+                    <Field label="Stop Loss"><input inputMode="decimal" type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} className={inputCls} /></Field>
+                  </div>
+                  <Field label="Take Profit (optional)"><input inputMode="decimal" type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} className={inputCls} /></Field>
+
+                  {!directionValid && !isNaN(entryN) && !isNaN(stopN) && (
+                    <p className="text-[11px] text-[#EF4444]">Invalid Stop Loss for selected trade direction.</p>
+                  )}
+                  {directionValid && !tpDirectionValid && (
+                    <p className="text-[11px] text-[#EF4444]">Invalid Take Profit for selected trade direction.</p>
+                  )}
+
+                  <button onClick={() => setShowAdvanced(v => !v)} className="text-[11px] text-[#B58BE0]">{showAdvanced ? 'Hide' : 'Show'} Advanced Instrument Specification</button>
+                  {showAdvanced && (
+                    <div className="space-y-3 pt-2 border-t border-white/[0.06]">
+                      <p className="text-[10px] text-[#6B7280]">Defaults are estimates — edit to match your broker's actual contract specification.</p>
+                      <Field label={`Value per ${spec.pointLabel} per ${spec.unitLabel.toLowerCase().slice(0, -1)}`}>
+                        <input inputMode="decimal" type="number" value={spec.valuePerPoint} onChange={e => setSpec(s => ({ ...s, valuePerPoint: parseFloat(e.target.value) || 0 }))} className={inputCls} />
+                      </Field>
+                      <div className="grid grid-cols-3 gap-2">
+                        <Field label="Min"><input inputMode="decimal" type="number" value={spec.min} onChange={e => setSpec(s => ({ ...s, min: parseFloat(e.target.value) || 0 }))} className={inputCls} /></Field>
+                        <Field label="Step"><input inputMode="decimal" type="number" value={spec.step} onChange={e => setSpec(s => ({ ...s, step: parseFloat(e.target.value) || 0.01 }))} className={inputCls} /></Field>
+                        <Field label="Max"><input inputMode="decimal" type="number" value={spec.max} onChange={e => setSpec(s => ({ ...s, max: parseFloat(e.target.value) || 0 }))} className={inputCls} /></Field>
+                      </div>
+                      {assetClass === 'Forex' && (
+                        <Field label="Manual Conversion Rate (to account currency)"><input inputMode="decimal" type="number" value={conversionRate} onChange={e => setConversionRate(e.target.value)} className={inputCls} /></Field>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {result && (
+              <div className="rounded-2xl bg-gradient-to-br from-[#2C0553] to-[#070509] border border-[#6B21A8]/30 p-5 space-y-4">
+                <div>
+                  <p className="text-[10px] tracking-wide text-[#B58BE0] mb-1">Recommended Position Size</p>
+                  <p className="font-display text-[26px] font-bold">{result.finalSize} <span className="text-[14px] font-medium text-[#B58BE0]">{spec.unitLabel}</span></p>
+                  <p className={`text-[11px] mt-1 ${result.withinLimit ? 'text-[#22C55E]' : 'text-[#EF4444]'}`}>{result.withinLimit ? '✓ Within Risk Limit' : '⚠ Risk Exceeds Limit'}</p>
+                  {result.belowMin && <p className="text-[11px] text-[#F59E0B] mt-1">Calculated size is below the minimum ({spec.min}) — reduce risk % or widen your stop.</p>}
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-[12px]">
+                  <div><p className="text-[#B58BE0]">Risk Amount</p><p className="font-semibold">${result.riskAmount.toFixed(2)} ({riskPct}%)</p></div>
+                  <div><p className="text-[#B58BE0]">Est. Max Loss</p><p className="font-semibold">${result.actualRisk.toFixed(2)}</p></div>
+                  <div><p className="text-[#B58BE0]">Price Distance</p><p className="font-semibold">{result.priceDistance}</p></div>
+                  {result.rr !== null && <div><p className="text-[#B58BE0]">Risk : Reward</p><p className="font-semibold">1 : {result.rr.toFixed(2)}</p></div>}
+                  {result.potentialProfit !== null && <div><p className="text-[#B58BE0]">Potential Profit</p><p className="font-semibold">${result.potentialProfit.toFixed(2)}</p></div>}
+                </div>
+                <p className="text-[10px] text-[#B58BE0]">Method: {spec.methodLabel}</p>
+                <button onClick={() => setShowCalcDetail(v => !v)} className="text-[11px] text-[#B58BE0] underline">{showCalcDetail ? 'Hide' : 'View'} Calculation</button>
+                {showCalcDetail && (
+                  <div className="text-[11px] text-[#D8C4EE] leading-relaxed bg-black/20 rounded-xl p-3 space-y-0.5">
+                    <p>Risk Amount: ${result.riskAmount.toFixed(2)}</p>
+                    <p>Price Distance: {result.priceDistance}</p>
+                    <p>Risk per {spec.unitLabel.slice(0, -1)}: {result.priceDistance} × {spec.valuePerPoint} = ${result.riskPerUnit.toFixed(2)}</p>
+                    <p>Raw Size: ${result.riskAmount.toFixed(2)} ÷ ${result.riskPerUnit.toFixed(2)} = {result.rawSize.toFixed(4)}</p>
+                    <p>Final Size (floored to step {spec.step}): {result.finalSize}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RiskManagementView({ trades, onClose }) {
   const [startingBalance, setStartingBalance] = useState(0);
   const [balanceInput, setBalanceInput] = useState('');
@@ -1588,6 +1840,7 @@ function RiskManagementView({ trades, onClose }) {
   const [calcEntry, setCalcEntry] = useState('');
   const [calcStop, setCalcStop] = useState('');
   const [calcRiskPct, setCalcRiskPct] = useState('1');
+  const [showCalc, setShowCalc] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -1634,15 +1887,6 @@ function RiskManagementView({ trades, onClose }) {
 
   const equityMismatch = startingBalance > 0 && Math.abs(totalPnl) > startingBalance * 3;
 
-  const entryN = parseFloat(calcEntry), stopN = parseFloat(calcStop), riskPctN = parseFloat(calcRiskPct);
-  const calcValid = !isNaN(entryN) && !isNaN(stopN) && !isNaN(riskPctN) && entryN !== stopN && currentEquity > 0;
-  let calcRiskAmount = 0, calcPositionSize = 0;
-  if (calcValid) {
-    calcRiskAmount = currentEquity * (riskPctN / 100);
-    const perUnitRisk = Math.abs(entryN - stopN);
-    calcPositionSize = perUnitRisk > 0 ? calcRiskAmount / perUnitRisk : 0;
-  }
-
   return (
     <>
       {onClose && <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>}
@@ -1679,26 +1923,8 @@ function RiskManagementView({ trades, onClose }) {
         </div>
       )}
 
-      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
-        <p className="text-[10px] tracking-wide text-[#6B7280]">Position Size Calculator</p>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={calcEntry} onChange={e => setCalcEntry(e.target.value)} className={inputCls} /></Field>
-          <Field label="Stop Loss"><input inputMode="decimal" type="number" placeholder="0.00" value={calcStop} onChange={e => setCalcStop(e.target.value)} className={inputCls} /></Field>
-        </div>
-        <Field label="Risk % of Equity"><input inputMode="decimal" type="number" value={calcRiskPct} onChange={e => setCalcRiskPct(e.target.value)} className={inputCls} /></Field>
-        {calcValid ? (
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">$ at Risk</p><p className="text-[12px] font-semibold">${calcRiskAmount.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">Position Size</p><p className="text-[12px] font-semibold">{calcPositionSize.toFixed(4)}</p></div>
-          </div>
-        ) : (
-          <p className="text-[10px] text-[#6B7280]">
-            {startingBalance <= 0 ? 'Set your starting balance above first.'
-              : currentEquity <= 0 ? `Your current equity is ${fmtMoney(currentEquity)} — negative, based on your logged trades — so position sizing isn't meaningful until it's positive.`
-              : 'Enter entry, stop, and risk % to calculate.'}
-          </p>
-        )}
-      </div>
+      <button onClick={() => setShowCalc(true)} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white">Open Position Size Calculator</button>
+      {showCalc && <PositionSizeCalculator startingBalance={currentEquity > 0 ? currentEquity : startingBalance} onClose={() => setShowCalc(false)} />}
     </>
   );
 }
