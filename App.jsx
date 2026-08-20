@@ -1909,7 +1909,7 @@ function RiskManagementView({ trades, onClose }) {
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Current Equity" value={fmtMoney(currentEquity).replace('+', '$')} negative={currentEquity < 0} />
+        <StatCard label="Current Equity" value={`${currentEquity < 0 ? '-' : ''}$${Math.abs(currentEquity).toFixed(2)}`} negative={currentEquity < 0} />
         <StatCard label="Net P&L" value={fmtMoney(totalPnl)} positive={totalPnl > 0} negative={totalPnl < 0} />
         <StatCard label="Max Drawdown" value={`${maxDDPct.toFixed(1)}%`} sub={fmtMoney(-maxDD)} negative={maxDD > 0} />
         <StatCard label="Current Drawdown" value={`${currentDDPct.toFixed(1)}%`} sub={fmtMoney(-currentDD)} negative={currentDD > 0} />
