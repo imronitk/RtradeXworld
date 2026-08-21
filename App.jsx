@@ -1902,12 +1902,16 @@ function RiskManagementView({ trades, onClose }) {
         <p className="text-[10px] text-[#6B7280] mt-2">This is your account size before any of your logged trades — used to calculate equity, drawdown %, and position sizing.</p>
       </div>
 
+      <button onClick={() => setShowCalc(true)} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white">Open Position Size Calculator</button>
+      {showCalc && <PositionSizeCalculator startingBalance={currentEquity > 0 ? currentEquity : startingBalance} onClose={() => setShowCalc(false)} />}
+
       {equityMismatch && (
         <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3">
           <p className="text-[12px] text-[#F59E0B] leading-relaxed">Your logged trades' total P&L ({fmtMoney(totalPnl)}) is large compared to your ${startingBalance} starting balance. If some of your trades were test/demo entries, delete them from the Ledger, or update your starting balance to match your real account — otherwise the numbers below (like drawdown %) won't be meaningful.</p>
         </div>
       )}
 
+      <p className="text-[10px] tracking-wide text-[#6B7280] mt-1">Account Reference</p>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Current Equity" value={`${currentEquity < 0 ? '-' : ''}$${Math.abs(currentEquity).toFixed(2)}`} negative={currentEquity < 0} />
         <StatCard label="Net P&L" value={fmtMoney(totalPnl)} positive={totalPnl > 0} negative={totalPnl < 0} />
@@ -1922,9 +1926,6 @@ function RiskManagementView({ trades, onClose }) {
           <p className="text-[10px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your starting balance. A common target is staying under 1-2% per trade.</p>
         </div>
       )}
-
-      <button onClick={() => setShowCalc(true)} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white">Open Position Size Calculator</button>
-      {showCalc && <PositionSizeCalculator startingBalance={currentEquity > 0 ? currentEquity : startingBalance} onClose={() => setShowCalc(false)} />}
     </>
   );
 }
