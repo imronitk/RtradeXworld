@@ -8,6 +8,63 @@ const SUPABASE_URL = 'https://mggvpiwlgrdusnbxfuxd.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_v2QBHeK8JVO3rgT9w3h3Hg_OdVWaM3u';
 const HEADERS = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
 
+// ===== AUTH ENGINE =====
+function setAuthToken(accessToken) {
+  HEADERS.Authorization = accessToken ? `Bearer ${accessToken}` : `Bearer ${SUPABASE_KEY}`;
+}
+function saveSession(session) {
+  localStorage.setItem('rt_access_token', session.access_token);
+  localStorage.setItem('rt_refresh_token', session.refresh_token);
+  setAuthToken(session.access_token);
+}
+function clearSession() {
+  localStorage.removeItem('rt_access_token');
+  localStorage.removeItem('rt_refresh_token');
+  setAuthToken(null);
+}
+async function apiSignUp(email, password, fullName) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, data: { full_name: fullName } }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Sign up failed');
+  return data;
+}
+async function apiSignIn(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Invalid email or password');
+  return data;
+}
+async function apiRefreshSession(refreshToken) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error('Session expired');
+  return data;
+}
+async function apiGetUser(accessToken) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${accessToken}` },
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error('Invalid session');
+  return data;
+}
+async function apiRecoverPassword(email) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/recover`, {
+    method: 'POST', headers: { apikey: SUPABASE_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error_description || 'Could not send reset email'); }
+}
+
 function toDb(t) {
   return {
     date: t.date, market: t.market, symbol: t.symbol, direction: t.direction,
@@ -2340,7 +2397,101 @@ function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   );
 }
 
-export default function App() {
+function AuthScreen({ onAuthenticated }) {
+  const [mode, setMode] = useState('login'); // login | signup | forgot
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  async function handleSubmit() {
+    setError(''); setMessage('');
+    if (!email.trim() || !password) { setError('Please fill in email and password.'); return; }
+    if (mode === 'signup') {
+      if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
+      if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
+    }
+    setLoading(true);
+    try {
+      if (mode === 'login') {
+        const session = await apiSignIn(email.trim(), password);
+        saveSession(session);
+        onAuthenticated(session.user);
+      } else if (mode === 'signup') {
+        const data = await apiSignUp(email.trim(), password, fullName.trim());
+        if (data.access_token) {
+          saveSession(data);
+          onAuthenticated(data.user);
+        } else {
+          setMessage('Check your email to verify your RTradeXworld account, then log in.');
+          setMode('login');
+        }
+      } else if (mode === 'forgot') {
+        await apiRecoverPassword(email.trim());
+        setMessage('If an account exists for this email, a password reset link has been sent.');
+      }
+    } catch (e) {
+      setError(e.message || 'Something went wrong.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col items-center justify-center px-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <p className="font-display text-[22px] font-bold tracking-tight">RTradeXworld</p>
+          <p className="text-[11px] text-[#6B7280] mt-1">The Trader Performance Ecosystem</p>
+        </div>
+
+        <div className="flex gap-2 mb-5">
+          <button onClick={() => { setMode('login'); setError(''); setMessage(''); }} className={`flex-1 py-2.5 rounded-xl text-[12px] font-medium border ${mode === 'login' ? 'bg-[#6B21A8]/15 border-[#6B21A8]/50 text-[#B58BE0]' : 'bg-[#070509] border-white/[0.08] text-[#6B7280]'}`}>Log In</button>
+          <button onClick={() => { setMode('signup'); setError(''); setMessage(''); }} className={`flex-1 py-2.5 rounded-xl text-[12px] font-medium border ${mode === 'signup' ? 'bg-[#6B21A8]/15 border-[#6B21A8]/50 text-[#B58BE0]' : 'bg-[#070509] border-white/[0.08] text-[#6B7280]'}`}>Create Account</button>
+        </div>
+
+        <div className="space-y-3">
+          {mode === 'signup' && (
+            <Field label="Full Name"><input type="text" value={fullName} onChange={e => setFullName(e.target.value)} className={inputCls} /></Field>
+          )}
+          <Field label="Email Address"><input type="email" autoCapitalize="none" value={email} onChange={e => setEmail(e.target.value)} className={inputCls} /></Field>
+          {mode !== 'forgot' && (
+            <Field label="Password">
+              <div className="relative">
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={e => setPassword(e.target.value)} className={inputCls} />
+                <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-[#6B7280]">{showPassword ? 'Hide' : 'Show'}</button>
+              </div>
+            </Field>
+          )}
+          {mode === 'signup' && (
+            <Field label="Confirm Password"><input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={inputCls} /></Field>
+          )}
+        </div>
+
+        {mode === 'login' && (
+          <button onClick={() => { setMode('forgot'); setError(''); setMessage(''); }} className="text-[11px] text-[#6B7280] mt-3">Forgot Password?</button>
+        )}
+
+        {error && <p className="text-[11px] text-[#EF4444] mt-3">{error}</p>}
+        {message && <p className="text-[11px] text-[#22C55E] mt-3">{message}</p>}
+
+        <button onClick={handleSubmit} disabled={loading} className="w-full mt-5 py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white disabled:opacity-50">
+          {loading ? 'Please wait...' : mode === 'login' ? 'Log In' : mode === 'signup' ? 'Create Account' : 'Send Reset Link'}
+        </button>
+
+        {mode === 'forgot' && (
+          <button onClick={() => { setMode('login'); setError(''); setMessage(''); }} className="w-full text-center text-[11px] text-[#6B7280] mt-4">Back to Log In</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AppShell({ user, onLogout }) {
   const [active, setActive] = useState('dashboard');
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2411,6 +2562,7 @@ export default function App() {
 
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   return (
     <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
@@ -2433,8 +2585,16 @@ export default function App() {
               )}
             </>
           )}
-          <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2C0553] to-[#030204] border border-[#6B21A8]/30 flex items-center justify-center">
-            <Flame size={16} className="text-[#6B21A8]" />
+          <div className="relative">
+            <button onClick={() => setShowProfileMenu(v => !v)} className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2C0553] to-[#030204] border border-[#6B21A8]/30 flex items-center justify-center">
+              <Flame size={16} className="text-[#6B21A8]" />
+            </button>
+            {showProfileMenu && (
+              <div className="absolute top-11 right-0 bg-[#0C0810] border border-white/[0.08] rounded-xl overflow-hidden z-20 min-w-[180px] shadow-xl">
+                <p className="px-4 py-3 text-[11px] text-[#6B7280] border-b border-white/[0.06] truncate">{user?.email}</p>
+                <button onClick={onLogout} className="w-full text-left px-4 py-3 text-[12px] text-[#EF4444] active:bg-[#151020]">Log Out</button>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -2468,4 +2628,51 @@ export default function App() {
       </nav>
     </div>
   );
+}
+
+export default function App() {
+  const [authState, setAuthState] = useState('checking'); // checking | authed | anon
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      const accessToken = localStorage.getItem('rt_access_token');
+      const refreshToken = localStorage.getItem('rt_refresh_token');
+      if (!accessToken) { setAuthState('anon'); return; }
+      try {
+        setAuthToken(accessToken);
+        const u = await apiGetUser(accessToken);
+        setUser(u);
+        setAuthState('authed');
+      } catch (e) {
+        try {
+          const session = await apiRefreshSession(refreshToken);
+          saveSession(session);
+          setUser(session.user);
+          setAuthState('authed');
+        } catch (e2) {
+          clearSession();
+          setAuthState('anon');
+        }
+      }
+    })();
+  }, []);
+
+  function handleAuthenticated(u) {
+    setUser(u);
+    setAuthState('authed');
+  }
+  function handleLogout() {
+    clearSession();
+    setUser(null);
+    setAuthState('anon');
+  }
+
+  if (authState === 'checking') {
+    return <div className="min-h-screen w-full bg-[#030204] flex items-center justify-center"><p className="text-[12px] text-[#6B7280]">Loading...</p></div>;
+  }
+  if (authState === 'anon') {
+    return <AuthScreen onAuthenticated={handleAuthenticated} />;
+  }
+  return <AppShell user={user} onLogout={handleLogout} />;
 }
