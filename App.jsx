@@ -64,6 +64,14 @@ async function apiRecoverPassword(email) {
   });
   if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error_description || 'Could not send reset email'); }
 }
+async function apiChangePassword(newPassword) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+    method: 'PUT', headers: HEADERS, body: JSON.stringify({ password: newPassword }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error_description || data.msg || 'Could not update password');
+  return data;
+}
 
 function toDb(t) {
   return {
@@ -2491,6 +2499,98 @@ function AuthScreen({ onAuthenticated }) {
   );
 }
 
+function NotificationsView({ onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 z-30 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="w-full sm:max-w-sm bg-[#0C0810] border border-white/[0.08] rounded-t-2xl sm:rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-display text-[14px] font-semibold">Notifications</p>
+          <button onClick={onClose} className="text-[#6B7280] text-lg">✕</button>
+        </div>
+        <div className="text-center py-8">
+          <p className="text-[12px] text-[#6B7280]">No new notifications</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GiveawayView({ onClose }) {
+  return (
+    <div className="fixed inset-0 bg-black/70 z-30 flex items-end sm:items-center justify-center" onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} className="w-full sm:max-w-sm bg-[#0C0810] border border-white/[0.08] rounded-t-2xl sm:rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-display text-[14px] font-semibold">🎁 RTradeXworld Giveaway</p>
+          <button onClick={onClose} className="text-[#6B7280] text-lg">✕</button>
+        </div>
+        <div className="text-center py-6">
+          <p className="text-[13px] font-semibold text-[#B58BE0] mb-2">Coming Soon</p>
+          <p className="text-[12px] text-[#6B7280] leading-relaxed">Stay connected for future announcements and official giveaways.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({ user, onClose, onLogout }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [savedMsg, setSavedMsg] = useState('');
+
+  async function handleChangePassword() {
+    setError(''); setSavedMsg('');
+    if (newPassword.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (newPassword !== confirmNewPassword) { setError('Passwords do not match.'); return; }
+    setSaving(true);
+    try {
+      await apiChangePassword(newPassword);
+      setSavedMsg('Password updated successfully.');
+      setNewPassword(''); setConfirmNewPassword('');
+    } catch (e) {
+      setError(e.message || 'Could not update password.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Profile</p>
+        <p className="text-[13px] font-medium">{user?.user_metadata?.full_name || 'Trader'}</p>
+        <p className="text-[12px] text-[#6B7280] mt-1">{user?.email}</p>
+      </div>
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
+        <p className="text-[10px] tracking-wide text-[#6B7280]">Security — Change Password</p>
+        <Field label="New Password"><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className={inputCls} /></Field>
+        <Field label="Confirm New Password"><input type="password" value={confirmNewPassword} onChange={e => setConfirmNewPassword(e.target.value)} className={inputCls} /></Field>
+        {error && <p className="text-[11px] text-[#EF4444]">{error}</p>}
+        {savedMsg && <p className="text-[11px] text-[#22C55E]">{savedMsg}</p>}
+        <button onClick={handleChangePassword} disabled={saving || !newPassword} className="w-full py-3 rounded-xl font-display text-[12px] font-semibold bg-[#6B21A8] text-white disabled:opacity-40">{saving ? 'Updating...' : 'Update Password'}</button>
+      </div>
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Account</p>
+        <div className="flex justify-between text-[12px] py-1"><span className="text-[#6B7280]">Plan</span><span>Free</span></div>
+        <div className="flex justify-between text-[12px] py-1"><span className="text-[#6B7280]">Status</span><span className="text-[#22C55E]">Active</span></div>
+        <p className="text-[10px] text-[#6B7280] mt-2">Premium plans are coming soon.</p>
+      </div>
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Support</p>
+        <p className="text-[12px] text-[#6B7280]">Support contact details coming soon.</p>
+      </div>
+
+      <button onClick={onLogout} className="w-full py-3 rounded-xl text-[12px] font-medium text-[#EF4444] border border-[#EF4444]/30">Log Out</button>
+    </>
+  );
+}
+
 function AppShell({ user, onLogout }) {
   const [active, setActive] = useState('dashboard');
   const [trades, setTrades] = useState([]);
@@ -2563,6 +2663,9 @@ function AppShell({ user, onLogout }) {
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showGiveaway, setShowGiveaway] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   return (
     <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
@@ -2574,7 +2677,7 @@ function AppShell({ user, onLogout }) {
           </p>
           <h1 className="font-display text-[16px] font-semibold tracking-tight mt-0.5">{title}</h1>
         </div>
-        <div className="flex items-center gap-2 relative">
+        <div className="flex items-center gap-1.5 relative">
           {active === 'trades' && (
             <>
               <button onClick={() => setShowHeaderMenu(v => !v)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF] text-lg leading-none">⋮</button>
@@ -2585,6 +2688,8 @@ function AppShell({ user, onLogout }) {
               )}
             </>
           )}
+          <button onClick={() => setShowNotifications(true)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF]"><AlertCircle size={15} /></button>
+          <button onClick={() => setShowGiveaway(true)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF]">🎁</button>
           <div className="relative">
             <button onClick={() => setShowProfileMenu(v => !v)} className="w-9 h-9 rounded-full bg-gradient-to-br from-[#2C0553] to-[#030204] border border-[#6B21A8]/30 flex items-center justify-center">
               <Flame size={16} className="text-[#6B21A8]" />
@@ -2592,14 +2697,19 @@ function AppShell({ user, onLogout }) {
             {showProfileMenu && (
               <div className="absolute top-11 right-0 bg-[#0C0810] border border-white/[0.08] rounded-xl overflow-hidden z-20 min-w-[180px] shadow-xl">
                 <p className="px-4 py-3 text-[11px] text-[#6B7280] border-b border-white/[0.06] truncate">{user?.email}</p>
+                <button onClick={() => { setShowSettings(true); setShowProfileMenu(false); }} className="w-full text-left px-4 py-3 text-[12px] text-[#E8E9EC] active:bg-[#151020]">Settings</button>
                 <button onClick={onLogout} className="w-full text-left px-4 py-3 text-[12px] text-[#EF4444] active:bg-[#151020]">Log Out</button>
               </div>
             )}
           </div>
         </div>
       </header>
+      {showNotifications && <NotificationsView onClose={() => setShowNotifications(false)} />}
+      {showGiveaway && <GiveawayView onClose={() => setShowGiveaway(false)} />}
       <main className="flex-1 px-5 pb-28 space-y-4 overflow-y-auto">
-        {showCsvImport ? (
+        {showSettings ? (
+          <SettingsView user={user} onClose={() => setShowSettings(false)} onLogout={onLogout} />
+        ) : showCsvImport ? (
           <CsvImportView trades={trades} onClose={() => setShowCsvImport(false)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
         ) : (
         <>
