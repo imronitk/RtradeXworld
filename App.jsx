@@ -72,6 +72,17 @@ async function apiChangePassword(newPassword) {
   if (!res.ok) throw new Error(data.error_description || data.msg || 'Could not update password');
   return data;
 }
+async function apiGetProfile(userId) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}&select=*`, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Profile read failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return data[0] || null;
+}
+// Centralized feature-access check. Everything is free during beta —
+// this is the single place to add restrictions later without touching every screen.
+function canUseFeature(profile, featureName) {
+  return true;
+}
 
 function toDb(t) {
   return {
@@ -2532,6 +2543,65 @@ function GiveawayView({ onClose }) {
   );
 }
 
+const PLAN_TIERS = [
+  { key: 'free', name: 'Free', blurb: 'Everything you have right now — full journal, AI Mentor, Risk tools.' },
+  { key: 'basic', name: 'Basic', blurb: 'Coming soon.' },
+  { key: 'pro', name: 'Pro', blurb: 'Coming soon.' },
+  { key: 'premium', name: 'Premium', blurb: 'Coming soon.' },
+];
+
+function SubscriptionView({ user, onClose }) {
+  const [profile, setProfile] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      try { setProfile(await apiGetProfile(user.id)); }
+      catch (e) { setError(e.message); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const currentPlan = profile?.subscription_plan || 'free';
+  const currentStatus = profile?.subscription_status || 'free';
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Settings</button>
+
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-[11px] text-[#EF4444]">{error}</div>}
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Current Plan</p>
+        {loading ? <p className="text-[13px] text-[#6B7280]">Loading...</p> : (
+          <>
+            <p className="font-display text-[20px] font-bold capitalize">{currentPlan}</p>
+            <p className="text-[11px] text-[#6B7280] mt-1 capitalize">Status: {currentStatus}</p>
+          </>
+        )}
+      </div>
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Premium Plans</p>
+        <p className="text-[12px] text-[#6B7280]">Premium plans are coming soon.</p>
+      </div>
+
+      <div className="space-y-2">
+        {PLAN_TIERS.map(tier => (
+          <div key={tier.key} className={`rounded-2xl border p-4 ${currentPlan === tier.key ? 'bg-[#6B21A8]/10 border-[#6B21A8]/40' : 'bg-[#070509] border-white/[0.06]'}`}>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[13px] font-semibold">{tier.name}</p>
+              {currentPlan === tier.key && <span className="text-[10px] font-medium text-[#B58BE0] px-2 py-0.5 rounded bg-[#6B21A8]/20">Current</span>}
+            </div>
+            <p className="text-[12px] text-[#6B7280]">{tier.blurb}</p>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function SettingsView({ user, onClose, onLogout }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
@@ -2666,6 +2736,7 @@ function AppShell({ user, onLogout }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showGiveaway, setShowGiveaway] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSubscription, setShowSubscription] = useState(false);
 
   return (
     <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
@@ -2698,6 +2769,7 @@ function AppShell({ user, onLogout }) {
               <div className="absolute top-11 right-0 bg-[#0C0810] border border-white/[0.08] rounded-xl overflow-hidden z-20 min-w-[180px] shadow-xl">
                 <p className="px-4 py-3 text-[11px] text-[#6B7280] border-b border-white/[0.06] truncate">{user?.email}</p>
                 <button onClick={() => { setShowSettings(true); setShowProfileMenu(false); }} className="w-full text-left px-4 py-3 text-[12px] text-[#E8E9EC] active:bg-[#151020]">Settings</button>
+                <button onClick={() => { setShowSubscription(true); setShowProfileMenu(false); }} className="w-full text-left px-4 py-3 text-[12px] text-[#E8E9EC] active:bg-[#151020]">Subscription</button>
                 <button onClick={onLogout} className="w-full text-left px-4 py-3 text-[12px] text-[#EF4444] active:bg-[#151020]">Log Out</button>
               </div>
             )}
@@ -2709,6 +2781,8 @@ function AppShell({ user, onLogout }) {
       <main className="flex-1 px-5 pb-28 space-y-4 overflow-y-auto">
         {showSettings ? (
           <SettingsView user={user} onClose={() => setShowSettings(false)} onLogout={onLogout} />
+        ) : showSubscription ? (
+          <SubscriptionView user={user} onClose={() => setShowSubscription(false)} />
         ) : showCsvImport ? (
           <CsvImportView trades={trades} onClose={() => setShowCsvImport(false)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
         ) : (
