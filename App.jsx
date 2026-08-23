@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck, Sparkles } from 'lucide-react';
+import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck, Sparkles, Menu, Upload } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
 import Papa from 'papaparse';
 
@@ -401,8 +401,7 @@ const NAV_ITEMS = [
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'stats', label: 'Stats', icon: BarChart3 },
   { id: 'journal', label: 'Journal', icon: BookOpen },
-  { id: 'risk', label: 'Risk', icon: TrendingDown },
-  { id: 'mentor', label: 'Mentor', icon: Sparkles },
+  { id: 'more', label: 'More', icon: Menu },
 ];
 const MARKETS = ['Forex', 'Stocks', 'Crypto', 'Futures', 'Options', 'Other'];
 const EMOTIONS = ['Calm', 'Confident', 'Anxious', 'FOMO', 'Greedy', 'Fearful', 'Revenge', 'Bored'];
@@ -2093,9 +2092,9 @@ function StatsView({ trades }) {
     return (
       <>
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
+          <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategy Perf.</button>
           <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
-          <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
+          <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Flame size={14} /> AI Coach</button>
           <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
         </div>
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center">
@@ -2152,9 +2151,9 @@ function StatsView({ trades }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-2">
-        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategies</button>
+        <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategy Perf.</button>
         <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
-        <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Flame size={14} /> Coach</button>
+        <button onClick={() => setShowCoach(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Flame size={14} /> AI Coach</button>
         <button onClick={() => setShowRules(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><ShieldCheck size={14} /> Rule Engine</button>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -2661,6 +2660,43 @@ function SettingsView({ user, onClose, onLogout }) {
   );
 }
 
+function MoreListItem({ icon: Icon, label, sub, onClick }) {
+  return (
+    <button onClick={onClick} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl bg-[#070509] border border-white/[0.06] active:bg-[#0C0810] text-left">
+      <div className="w-9 h-9 rounded-lg bg-[#6B21A8]/15 flex items-center justify-center shrink-0">
+        <Icon size={16} className="text-[#B58BE0]" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium">{label}</p>
+        {sub && <p className="text-[11px] text-[#6B7280] truncate">{sub}</p>}
+      </div>
+    </button>
+  );
+}
+
+function MoreView({ onOpenTool, onGoToStats }) {
+  return (
+    <>
+      <div>
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Trading Tools</p>
+        <div className="space-y-2">
+          <MoreListItem icon={TrendingDown} label="Risk Manager" sub="Equity, drawdown, account balance" onClick={() => onOpenTool('risk')} />
+          <MoreListItem icon={Target} label="Position Size Calculator" sub="Forex, Commodities, Indices, CFDs" onClick={() => onOpenTool('calc')} />
+          <MoreListItem icon={Upload} label="CSV Import" sub="Import trades from Delta Exchange" onClick={() => onOpenTool('csv')} />
+        </div>
+      </div>
+
+      <div>
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2 mt-2">Performance & Discipline</p>
+        <div className="space-y-2">
+          <MoreListItem icon={Sparkles} label="AI Mentor" sub="Conversational coaching on your data" onClick={() => onOpenTool('mentor')} />
+          <MoreListItem icon={BarChart3} label="Stats Hub" sub="Strategy Performance, Psychology, AI Coach, Rule Engine" onClick={onGoToStats} />
+        </div>
+      </div>
+    </>
+  );
+}
+
 function AppShell({ user, onLogout }) {
   const [active, setActive] = useState('dashboard');
   const [trades, setTrades] = useState([]);
@@ -2725,12 +2761,12 @@ function AppShell({ user, onLogout }) {
     calendar: ['Calendar', 'Your Trading Calendar'],
     stats: ['Statistics', 'Your Trading Edge'],
     journal: ['Journal', 'Daily Reflection'],
-    risk: ['Risk', 'Account & Position Sizing'],
-    mentor: ['Mentor', 'Your AI Trading Mentor'],
+    more: ['More', 'Tools & Account'],
   };
   const [eyebrow, title] = titles[active];
 
   const [showCsvImport, setShowCsvImport] = useState(false);
+  const [moreDetailView, setMoreDetailView] = useState(null); // null | 'risk' | 'calc' | 'csv' | 'mentor'
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -2785,6 +2821,17 @@ function AppShell({ user, onLogout }) {
           <SubscriptionView user={user} onClose={() => setShowSubscription(false)} />
         ) : showCsvImport ? (
           <CsvImportView trades={trades} onClose={() => setShowCsvImport(false)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
+        ) : moreDetailView === 'risk' ? (
+          <RiskManagementView trades={trades} onClose={() => setMoreDetailView(null)} />
+        ) : moreDetailView === 'mentor' ? (
+          <AIMentorView trades={trades} onClose={() => setMoreDetailView(null)} />
+        ) : moreDetailView === 'csv' ? (
+          <CsvImportView trades={trades} onClose={() => setMoreDetailView(null)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
+        ) : moreDetailView === 'calc' ? (
+          <>
+            <button onClick={() => setMoreDetailView(null)} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to More</button>
+            <PositionSizeCalculator startingBalance={0} onClose={() => setMoreDetailView(null)} />
+          </>
         ) : (
         <>
         {active === 'dashboard' && <DashboardView trades={trades} loading={loading} />}
@@ -2792,8 +2839,7 @@ function AppShell({ user, onLogout }) {
         {active === 'calendar' && <CalendarView trades={trades} />}
         {active === 'stats' && <StatsView trades={trades} />}
         {active === 'journal' && <JournalView />}
-        {active === 'risk' && <RiskManagementView trades={trades} />}
-        {active === 'mentor' && <AIMentorView trades={trades} />}
+        {active === 'more' && <MoreView onOpenTool={setMoreDetailView} onGoToStats={() => setActive('stats')} />}
         </>
         )}
       </main>
