@@ -9,6 +9,7 @@ const SUPABASE_KEY = 'sb_publishable_v2QBHeK8JVO3rgT9w3h3Hg_OdVWaM3u';
 const HEADERS = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
 
 // ===== AUTH ENGINE =====
+let CURRENT_USER_ID = null;
 function setAuthToken(accessToken) {
   HEADERS.Authorization = accessToken ? `Bearer ${accessToken}` : `Bearer ${SUPABASE_KEY}`;
 }
@@ -16,11 +17,13 @@ function saveSession(session) {
   localStorage.setItem('rt_access_token', session.access_token);
   localStorage.setItem('rt_refresh_token', session.refresh_token);
   setAuthToken(session.access_token);
+  CURRENT_USER_ID = session.user?.id || null;
 }
 function clearSession() {
   localStorage.removeItem('rt_access_token');
   localStorage.removeItem('rt_refresh_token');
   setAuthToken(null);
+  CURRENT_USER_ID = null;
 }
 async function apiSignUp(email, password, fullName) {
   const res = await fetch(`${SUPABASE_URL}/auth/v1/signup`, {
@@ -92,6 +95,7 @@ function toDb(t) {
     emotion: t.emotion, mistake_tags: t.mistake, confidence: t.confidence, notes: t.notes,
     screenshot_url: t.screenshotUrl || null,
     import_fingerprint: t.import_fingerprint || null, import_source: t.import_source || null,
+    user_id: CURRENT_USER_ID,
   };
 }
 function fromDb(row) {
@@ -283,6 +287,7 @@ function journalToDb(e) {
     date: e.date, mood: e.mood, confidence: e.confidence,
     pre_market_plan: e.preMarketPlan, post_market_review: e.postMarketReview,
     lessons_learned: e.lessonsLearned, mistakes: e.mistakes, tomorrow_focus: e.tomorrowFocus,
+    user_id: CURRENT_USER_ID,
   };
 }
 function journalFromDb(row) {
@@ -310,7 +315,7 @@ async function apiJournalUpsert(entry) {
 
 // ===== STRATEGY API =====
 function strategyToDb(s) {
-  return { name: s.name, description: s.description, rules: s.rules, checklist: s.checklist, expected_rr: s.expectedRR === '' ? null : s.expectedRR };
+  return { name: s.name, description: s.description, rules: s.rules, checklist: s.checklist, expected_rr: s.expectedRR === '' ? null : s.expectedRR, user_id: CURRENT_USER_ID };
 }
 function strategyFromDb(row) {
   return { id: row.id, name: row.name, description: row.description, rules: row.rules, checklist: row.checklist, expectedRR: row.expected_rr };
@@ -349,7 +354,7 @@ async function apiRulesList() {
 async function apiRuleCreate(ruleType, threshold) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_rules`, {
     method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' },
-    body: JSON.stringify({ rule_type: ruleType, threshold, enabled: true }),
+    body: JSON.stringify({ rule_type: ruleType, threshold, enabled: true, user_id: CURRENT_USER_ID }),
   });
   if (!res.ok) throw new Error(`Rule create failed (${res.status}): ${await res.text()}`);
   return ruleFromDb((await res.json())[0]);
@@ -371,16 +376,16 @@ async function apiRuleDelete(id) {
 
 // ===== ACCOUNT SETTINGS API =====
 async function apiGetAccountSettings() {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/account_settings?id=eq.main&select=*`, { headers: HEADERS });
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/account_settings?user_id=eq.${CURRENT_USER_ID}&select=*`, { headers: HEADERS });
   if (!res.ok) throw new Error(`Account settings read failed (${res.status}): ${await res.text()}`);
   const data = await res.json();
   return data[0] ? Number(data[0].starting_balance) : 0;
 }
 async function apiSetAccountSettings(balance) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/account_settings?on_conflict=id`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/account_settings?on_conflict=user_id`, {
     method: 'POST',
     headers: { ...HEADERS, Prefer: 'resolution=merge-duplicates,return=representation' },
-    body: JSON.stringify({ id: 'main', starting_balance: balance, updated_at: new Date().toISOString() }),
+    body: JSON.stringify({ id: CURRENT_USER_ID, user_id: CURRENT_USER_ID, starting_balance: balance, updated_at: new Date().toISOString() }),
   });
   if (!res.ok) throw new Error(`Account settings save failed (${res.status}): ${await res.text()}`);
   return Number((await res.json())[0].starting_balance);
@@ -2674,14 +2679,13 @@ function MoreListItem({ icon: Icon, label, sub, onClick }) {
   );
 }
 
-function MoreView({ onOpenTool, onGoToStats }) {
+function MoreView({ onOpenTool }) {
   return (
     <>
       <div>
         <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Trading Tools</p>
         <div className="space-y-2">
-          <MoreListItem icon={TrendingDown} label="Risk Manager" sub="Equity, drawdown, account balance" onClick={() => onOpenTool('risk')} />
-          <MoreListItem icon={Target} label="Position Size Calculator" sub="Forex, Commodities, Indices, CFDs" onClick={() => onOpenTool('calc')} />
+          <MoreListItem icon={TrendingDown} label="Risk Manager" sub="Equity, drawdown, position size calculator" onClick={() => onOpenTool('risk')} />
           <MoreListItem icon={Upload} label="CSV Import" sub="Import trades from Delta Exchange" onClick={() => onOpenTool('csv')} />
         </div>
       </div>
@@ -2690,7 +2694,6 @@ function MoreView({ onOpenTool, onGoToStats }) {
         <p className="text-[10px] tracking-wide text-[#6B7280] mb-2 mt-2">Performance & Discipline</p>
         <div className="space-y-2">
           <MoreListItem icon={Sparkles} label="AI Mentor" sub="Conversational coaching on your data" onClick={() => onOpenTool('mentor')} />
-          <MoreListItem icon={BarChart3} label="Stats Hub" sub="Strategy Performance, Psychology, AI Coach, Rule Engine" onClick={onGoToStats} />
         </div>
       </div>
     </>
@@ -2785,16 +2788,6 @@ function AppShell({ user, onLogout }) {
           <h1 className="font-display text-[16px] font-semibold tracking-tight mt-0.5">{title}</h1>
         </div>
         <div className="flex items-center gap-1.5 relative">
-          {active === 'trades' && (
-            <>
-              <button onClick={() => setShowHeaderMenu(v => !v)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF] text-lg leading-none">⋮</button>
-              {showHeaderMenu && (
-                <div className="absolute top-11 right-0 bg-[#0C0810] border border-white/[0.08] rounded-xl overflow-hidden z-20 min-w-[160px] shadow-xl">
-                  <button onClick={() => { setShowCsvImport(true); setShowHeaderMenu(false); }} className="w-full text-left px-4 py-3 text-[12px] text-[#E8E9EC] active:bg-[#151020]">Import CSV</button>
-                </div>
-              )}
-            </>
-          )}
           <button onClick={() => setShowNotifications(true)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF]"><AlertCircle size={15} /></button>
           <button onClick={() => setShowGiveaway(true)} className="w-9 h-9 rounded-full bg-[#070509] border border-white/[0.08] flex items-center justify-center text-[#9CA3AF]">🎁</button>
           <div className="relative">
@@ -2839,7 +2832,7 @@ function AppShell({ user, onLogout }) {
         {active === 'calendar' && <CalendarView trades={trades} />}
         {active === 'stats' && <StatsView trades={trades} />}
         {active === 'journal' && <JournalView />}
-        {active === 'more' && <MoreView onOpenTool={setMoreDetailView} onGoToStats={() => setActive('stats')} />}
+        {active === 'more' && <MoreView onOpenTool={setMoreDetailView} />}
         </>
         )}
       </main>
@@ -2872,6 +2865,7 @@ export default function App() {
       try {
         setAuthToken(accessToken);
         const u = await apiGetUser(accessToken);
+        CURRENT_USER_ID = u.id;
         setUser(u);
         setAuthState('authed');
       } catch (e) {
