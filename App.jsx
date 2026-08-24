@@ -415,11 +415,11 @@ const inputCls = "w-full bg-[#0C0810] border border-white/[0.08] rounded-xl px-3
 
 function fmtMoney(n) { const sign = n > 0 ? '+' : n < 0 ? '-' : ''; return `${sign}$${Math.abs(n).toFixed(2)}`; }
 function Field({ label, children }) { return <div><label className="text-[10px] tracking-wide text-[#6B7280] mb-1.5 block">{label}</label>{children}</div>; }
-function StatCard({ label, value, positive, negative, icon: Icon, sub, compact }) {
+function StatCard({ label, value, positive, negative, icon: Icon, sub, compact, important }) {
   const color = positive ? '#22C55E' : negative ? '#EF4444' : '#E8E9EC';
   return (
     <div className={`rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden min-w-0 ${compact ? 'p-3' : 'p-4'}`}>
-      <div className="flex items-center gap-1.5 text-[#6B7280] mb-2 min-w-0">{Icon && <Icon size={13} className="shrink-0" />}<span className="text-[8.5px] font-medium tracking-wide truncate">{label}</span></div>
+      <div className="flex items-center gap-1.5 text-[#6B7280] mb-2 min-w-0">{Icon && <Icon size={13} className="shrink-0" />}<span className={`text-[8.5px] font-medium tracking-wide truncate ${important ? 'uppercase' : ''}`}>{label}</span></div>
       <p className={`font-display font-semibold tracking-tight truncate ${compact ? 'text-[12px]' : 'text-[16px]'}`} style={{ color }}>{value}</p>
       {sub && <p className="text-[10px] text-[#6B7280] mt-0.5">{sub}</p>}
     </div>
@@ -467,7 +467,7 @@ function DashboardView({ trades, loading }) {
         </div>
       ) : null}
       <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
-        <p className="text-[10px] tracking-[0.14em] text-[#6B7280] mb-1">Total P&L</p>
+        <p className="text-[10px] uppercase tracking-[0.14em] text-[#6B7280] mb-1">Total P&L</p>
         <p className="font-display text-[22px] font-semibold tracking-tight" style={{ color: totalPnl > 0 ? '#22C55E' : totalPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(totalPnl)}</p>
         <div className="h-16 mt-3 -mx-1">
           <ResponsiveContainer width="100%" height="100%">
@@ -1993,8 +1993,8 @@ function RiskManagementView({ trades, onClose }) {
 
       <p className="text-[10px] tracking-wide text-[#6B7280] mt-1">Account Reference</p>
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Current Equity" value={`${currentEquity < 0 ? '-' : ''}$${Math.abs(currentEquity).toFixed(2)}`} negative={currentEquity < 0} />
-        <StatCard label="Net P&L" value={fmtMoney(totalPnl)} positive={totalPnl > 0} negative={totalPnl < 0} />
+        <StatCard label="Current Equity" value={`${currentEquity < 0 ? '-' : ''}$${Math.abs(currentEquity).toFixed(2)}`} negative={currentEquity < 0} important />
+        <StatCard label="Net P&L" value={fmtMoney(totalPnl)} positive={totalPnl > 0} negative={totalPnl < 0} important />
         <StatCard label="Max Drawdown" value={`${maxDDPct.toFixed(1)}%`} sub={fmtMoney(-maxDD)} negative={maxDD > 0} />
         <StatCard label="Current Drawdown" value={`${currentDDPct.toFixed(1)}%`} sub={fmtMoney(-currentDD)} negative={currentDD > 0} />
       </div>
@@ -2577,7 +2577,7 @@ function SubscriptionView({ user, onClose }) {
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-[11px] text-[#EF4444]">{error}</div>}
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Current Plan</p>
+        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-1">Current Plan</p>
         {loading ? <p className="text-[13px] text-[#6B7280]">Loading...</p> : (
           <>
             <p className="font-display text-[20px] font-bold capitalize">{currentPlan}</p>
@@ -2781,7 +2781,7 @@ function AppShell({ user, onLogout }) {
     <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col overflow-x-hidden">
       <header className="px-5 pt-6 pb-4 flex items-center justify-between">
         <div>
-          <p className="text-[10px] tracking-[0.18em] text-[#6B7280] flex items-center gap-1.5">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[#6B7280] flex items-center gap-1.5">
             {eyebrow}
             <span className={`w-1.5 h-1.5 rounded-full ${connStatus === 'connected' ? 'bg-[#6B21A8]' : connStatus === 'error' ? 'bg-[#EF4444]' : 'bg-[#F59E0B]'}`} />
           </p>
