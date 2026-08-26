@@ -8,8 +8,8 @@ const SUPABASE_URL = 'https://mggvpiwlgrdusnbxfuxd.supabase.co';
 
 // ===== SUPPORT CONFIG =====
 // Fill these in whenever you're ready — leave as '' to show "Coming soon" honestly.
-const SUPPORT_TELEGRAM_URL = ''; // e.g. 'https://t.me/yourusername'
-const SUPPORT_EMAIL = ''; // e.g. 'support@rtradexworld.com'
+const SUPPORT_TELEGRAM_URL = ''; // e.g. 'https://t.me/ronitxworld'
+const SUPPORT_EMAIL = ''; // e.g. 'rtradexworld@gmail.com'
 const SUPABASE_KEY = 'sb_publishable_v2QBHeK8JVO3rgT9w3h3Hg_OdVWaM3u';
 const HEADERS = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
 
