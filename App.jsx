@@ -5,6 +5,11 @@ import Papa from 'papaparse';
 
 // ===== SUPABASE CONNECTION =====
 const SUPABASE_URL = 'https://mggvpiwlgrdusnbxfuxd.supabase.co';
+
+// ===== SUPPORT CONFIG =====
+// Fill these in whenever you're ready — leave as '' to show "Coming soon" honestly.
+const SUPPORT_TELEGRAM_URL = ''; // e.g. 'https://t.me/yourusername'
+const SUPPORT_EMAIL = ''; // e.g. 'support@rtradexworld.com'
 const SUPABASE_KEY = 'sb_publishable_v2QBHeK8JVO3rgT9w3h3Hg_OdVWaM3u';
 const HEADERS = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' };
 
@@ -2656,8 +2661,31 @@ function SettingsView({ user, onClose, onLogout }) {
       </div>
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Support</p>
-        <p className="text-[12px] text-[#6B7280]">Support contact details coming soon.</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Contact Us</p>
+        <div className="space-y-2">
+          {SUPPORT_TELEGRAM_URL ? (
+            <a href={SUPPORT_TELEGRAM_URL} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3">
+              <span className="text-[12px] font-medium">Telegram</span>
+              <span className="text-[11px] text-[#B58BE0]">Open →</span>
+            </a>
+          ) : (
+            <div className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3 opacity-50">
+              <span className="text-[12px] font-medium">Telegram</span>
+              <span className="text-[11px] text-[#6B7280]">Coming soon</span>
+            </div>
+          )}
+          {SUPPORT_EMAIL ? (
+            <a href={`mailto:${SUPPORT_EMAIL}`} className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3">
+              <span className="text-[12px] font-medium">Email</span>
+              <span className="text-[11px] text-[#B58BE0]">{SUPPORT_EMAIL}</span>
+            </a>
+          ) : (
+            <div className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3 opacity-50">
+              <span className="text-[12px] font-medium">Email</span>
+              <span className="text-[11px] text-[#6B7280]">Coming soon</span>
+            </div>
+          )}
+        </div>
       </div>
 
       <button onClick={onLogout} className="w-full py-3 rounded-xl text-[12px] font-medium text-[#EF4444] border border-[#EF4444]/30">Log Out</button>
