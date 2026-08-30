@@ -2425,6 +2425,53 @@ function TradesTab({ trades, onAdd, onUpdate, onDelete, dbError }) {
   );
 }
 
+function ResetPasswordView({ onDone }) {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleUpdate() {
+    setError('');
+    if (newPassword.length < 6) { setError('Password must be at least 6 characters.'); return; }
+    if (newPassword !== confirmPassword) { setError('Passwords do not match.'); return; }
+    setLoading(true);
+    try {
+      const updatedUser = await apiChangePassword(newPassword);
+      onDone(updatedUser);
+    } catch (e) {
+      setError(e.message || 'Could not update password. The reset link may have expired — request a new one.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col items-center justify-center px-6">
+      <div className="w-full max-w-sm">
+        <div className="text-center mb-8">
+          <p className="font-display text-[22px] font-bold tracking-tight">Reset Your Password</p>
+          <p className="text-[11px] text-[#6B7280] mt-1">Choose a new password for your RTradeXworld account.</p>
+        </div>
+        <div className="space-y-3">
+          <Field label="New Password">
+            <div className="relative">
+              <input type={showPassword ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)} className={inputCls} />
+              <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-[#6B7280]">{showPassword ? 'Hide' : 'Show'}</button>
+            </div>
+          </Field>
+          <Field label="Confirm New Password"><input type={showPassword ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={inputCls} /></Field>
+        </div>
+        {error && <p className="text-[11px] text-[#EF4444] mt-3">{error}</p>}
+        <button onClick={handleUpdate} disabled={loading} className="w-full mt-5 py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white disabled:opacity-50">
+          {loading ? 'Updating...' : 'Update Password'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AuthScreen({ onAuthenticated }) {
   const [mode, setMode] = useState('login'); // login | signup | forgot
   const [fullName, setFullName] = useState('');
@@ -2882,11 +2929,34 @@ function AppShell({ user, onLogout }) {
 }
 
 export default function App() {
-  const [authState, setAuthState] = useState('checking'); // checking | authed | anon
+  const [authState, setAuthState] = useState('checking'); // checking | authed | anon | recovery
   const [user, setUser] = useState(null);
 
   useEffect(() => {
     (async () => {
+      // First: check if this page load is a password-recovery link from Supabase
+      const hash = window.location.hash;
+      if (hash && hash.includes('type=recovery')) {
+        const params = new URLSearchParams(hash.slice(1));
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        if (accessToken) {
+          try {
+            setAuthToken(accessToken);
+            const u = await apiGetUser(accessToken);
+            CURRENT_USER_ID = u.id;
+            localStorage.setItem('rt_access_token', accessToken);
+            if (refreshToken) localStorage.setItem('rt_refresh_token', refreshToken);
+            setUser(u);
+            setAuthState('recovery');
+            window.history.replaceState(null, '', window.location.pathname);
+            return;
+          } catch (e) {
+            console.error('[Recovery] Invalid or expired reset link:', e);
+          }
+        }
+      }
+
       const accessToken = localStorage.getItem('rt_access_token');
       const refreshToken = localStorage.getItem('rt_refresh_token');
       if (!accessToken) { setAuthState('anon'); return; }
@@ -2919,9 +2989,16 @@ export default function App() {
     setUser(null);
     setAuthState('anon');
   }
+  function handleResetDone(u) {
+    setUser(u);
+    setAuthState('authed');
+  }
 
   if (authState === 'checking') {
     return <div className="min-h-screen w-full bg-[#030204] flex items-center justify-center"><p className="text-[12px] text-[#6B7280]">Loading...</p></div>;
+  }
+  if (authState === 'recovery') {
+    return <ResetPasswordView onDone={handleResetDone} />;
   }
   if (authState === 'anon') {
     return <AuthScreen onAuthenticated={handleAuthenticated} />;
