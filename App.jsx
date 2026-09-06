@@ -86,6 +86,23 @@ async function apiGetProfile(userId) {
   const data = await res.json();
   return data[0] || null;
 }
+async function apiUpdateProfile(userId, fields) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/profiles?id=eq.${userId}`, {
+    method: 'PATCH', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(fields),
+  });
+  if (!res.ok) throw new Error(`Profile update failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return data[0];
+}
+async function apiCreateTradingAccount(fields) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_accounts`, {
+    method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' },
+    body: JSON.stringify({ ...fields, user_id: CURRENT_USER_ID }),
+  });
+  if (!res.ok) throw new Error(`Trading account create failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return data[0];
+}
 // Centralized feature-access check. Everything is free during beta —
 // this is the single place to add restrictions later without touching every screen.
 function canUseFeature(profile, featureName) {
@@ -2472,6 +2489,213 @@ function ResetPasswordView({ onDone }) {
   );
 }
 
+const ONBOARDING_MARKETS = ['Forex', 'Commodities', 'Indices', 'CFDs', 'Crypto'];
+const EXPERIENCE_LEVELS = ['Beginner', 'Developing', 'Experienced', 'Professional'];
+const TRADING_STYLES = ['Scalping', 'Intraday', 'Swing Trading', 'Position Trading', 'Multiple Styles'];
+const TIMEFRAMES = ['1 Minute', '5 Minute', '15 Minute', '30 Minute', '1 Hour', '4 Hour', 'Daily', 'Multiple Timeframes'];
+const CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'Other'];
+const RR_OPTIONS = ['1:1', '1:2', '1:3', '1:4', 'Custom'];
+const IMPROVEMENT_FOCUS_OPTIONS = ['Discipline', 'Risk Management', 'Strategy Execution', 'Trading Psychology', 'Consistency', 'Trade Analysis'];
+
+function OnboardingChip({ label, selected, onClick }) {
+  return (
+    <button onClick={onClick} className={`px-4 py-2.5 rounded-xl text-[13px] font-medium border ${selected ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#070509] border-white/[0.08] text-[#9CA3AF]'}`}>
+      {label}
+    </button>
+  );
+}
+
+function OnboardingView({ user, onComplete }) {
+  const [step, setStep] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [f, setF] = useState({
+    experience: '', markets: [], tradingStyle: '', timeframe: '',
+    accountName: 'My Main Account', startingCapital: '', currency: 'USD', broker: '',
+    riskMethod: 'percentage', riskPerTrade: '', dailyLossLimit: '', maxTradesPerDay: '', defaultRR: '1:2', customRR: '',
+    primaryFocus: '', secondaryFocus: [],
+  });
+  const set = (key, val) => setF(prev => ({ ...prev, [key]: val }));
+  const toggleArr = (key, val) => setF(prev => ({ ...prev, [key]: prev[key].includes(val) ? prev[key].filter(x => x !== val) : [...prev[key], val] }));
+
+  async function skipForNow() {
+    setSaving(true);
+    try {
+      await apiUpdateProfile(user.id, { onboarding_status: 'skipped' });
+      onComplete();
+    } catch (e) {
+      setError(e.message || 'Could not skip right now — please try again.');
+      setSaving(false);
+    }
+  }
+
+  async function completeSetup() {
+    setSaving(true);
+    setError('');
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      await apiUpdateProfile(user.id, {
+        timezone, base_currency: f.currency, experience_level: f.experience,
+        primary_trading_style: f.tradingStyle, primary_timeframe: f.timeframe,
+        preferred_markets: f.markets, primary_improvement_focus: f.primaryFocus,
+        secondary_improvement_focus: f.secondaryFocus, onboarding_status: 'completed',
+        onboarding_completed_at: new Date().toISOString(),
+      });
+      await apiCreateTradingAccount({
+        account_name: f.accountName || 'My Main Account', starting_capital: Number(f.startingCapital) || 0,
+        currency: f.currency, broker_or_exchange: f.broker || null,
+        default_risk_method: f.riskMethod, default_risk_value: Number(f.riskPerTrade) || null,
+        daily_loss_limit: Number(f.dailyLossLimit) || null, max_trades_per_day: Number(f.maxTradesPerDay) || null,
+        default_rr: f.defaultRR === 'Custom' ? f.customRR : f.defaultRR,
+      });
+      // Sync starting capital into the existing Risk Manager balance so it's immediately useful there too
+      if (Number(f.startingCapital) > 0) {
+        try { await apiSetAccountSettings(Number(f.startingCapital)); } catch (e) { console.error('[Onboarding] balance sync failed:', e); }
+      }
+      onComplete();
+    } catch (e) {
+      setError(e.message || 'Could not save your profile. Please try again.');
+      setSaving(false);
+    }
+  }
+
+  const canContinue = {
+    1: true, 2: !!f.experience, 3: f.markets.length > 0, 4: !!f.tradingStyle && !!f.timeframe,
+    5: !!f.accountName.trim() && Number(f.startingCapital) > 0,
+    6: Number(f.riskPerTrade) > 0 && Number(f.dailyLossLimit) > 0 && Number(f.maxTradesPerDay) > 0,
+    7: !!f.primaryFocus, 8: true,
+  }[step];
+
+  const TOTAL_STEPS = 7;
+
+  return (
+    <div className="min-h-screen w-full bg-[#030204] text-[#E8E9EC] font-sans flex flex-col px-6 py-8">
+      {step > 1 && step <= TOTAL_STEPS && (
+        <div className="flex items-center justify-between mb-6">
+          <button onClick={() => setStep(s => s - 1)} className="text-[#6B7280]"><ChevronLeft size={20} /></button>
+          <p className="text-[10px] uppercase tracking-wide text-[#6B7280]">Step {step} of {TOTAL_STEPS}</p>
+          <div className="w-5" />
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col justify-center max-w-sm mx-auto w-full">
+        {step === 1 && (
+          <div className="text-center">
+            <p className="font-display text-[24px] font-bold mb-2">Welcome to RTradeXworld</p>
+            <p className="text-[13px] text-[#B58BE0] mb-4">Build your edge. Trade with discipline.</p>
+            <p className="text-[13px] text-[#9CA3AF] leading-relaxed mb-8">RTradeXworld helps you understand your trading performance, manage risk, and build better trading habits.</p>
+            <button onClick={() => setStep(2)} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white mb-3">Let's Set Up Your Trading Profile</button>
+            <button onClick={skipForNow} disabled={saving} className="w-full text-[12px] text-[#6B7280] py-2">Skip for Now</button>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div>
+            <p className="font-display text-[18px] font-semibold mb-1">How would you describe your trading experience?</p>
+            <div className="grid grid-cols-2 gap-2 mt-5">
+              {EXPERIENCE_LEVELS.map(o => <OnboardingChip key={o} label={o} selected={f.experience === o} onClick={() => set('experience', o)} />)}
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div>
+            <p className="font-display text-[18px] font-semibold mb-1">Which markets do you trade?</p>
+            <p className="text-[12px] text-[#6B7280] mb-5">Select all markets you actively trade.</p>
+            <div className="flex flex-wrap gap-2">
+              {ONBOARDING_MARKETS.map(o => <OnboardingChip key={o} label={o} selected={f.markets.includes(o)} onClick={() => toggleArr('markets', o)} />)}
+            </div>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div>
+            <p className="font-display text-[18px] font-semibold mb-3">What is your primary trading style?</p>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {TRADING_STYLES.map(o => <OnboardingChip key={o} label={o} selected={f.tradingStyle === o} onClick={() => set('tradingStyle', o)} />)}
+            </div>
+            <p className="font-display text-[15px] font-semibold mb-3">Which timeframe do you use most often?</p>
+            <div className="flex flex-wrap gap-2">
+              {TIMEFRAMES.map(o => <OnboardingChip key={o} label={o} selected={f.timeframe === o} onClick={() => set('timeframe', o)} />)}
+            </div>
+          </div>
+        )}
+
+        {step === 5 && (
+          <div className="space-y-4">
+            <p className="font-display text-[18px] font-semibold mb-1">Your primary trading account</p>
+            <Field label="Account Name"><input type="text" placeholder="e.g. My Main Account" value={f.accountName} onChange={e => set('accountName', e.target.value)} className={inputCls} /></Field>
+            <Field label="Starting Capital"><input inputMode="decimal" type="number" placeholder="e.g. 1000" value={f.startingCapital} onChange={e => set('startingCapital', e.target.value)} className={inputCls} /></Field>
+            <Field label="Account Currency">
+              <div className="flex flex-wrap gap-2">{CURRENCIES.map(c => <OnboardingChip key={c} label={c} selected={f.currency === c} onClick={() => set('currency', c)} />)}</div>
+            </Field>
+            <Field label="Broker / Exchange (optional)"><input type="text" placeholder="e.g. XM, Delta Exchange" value={f.broker} onChange={e => set('broker', e.target.value)} className={inputCls} /></Field>
+          </div>
+        )}
+
+        {step === 6 && (
+          <div className="space-y-4">
+            <p className="font-display text-[18px] font-semibold mb-1">How do you normally define your risk per trade?</p>
+            <div className="flex gap-2">
+              <button onClick={() => set('riskMethod', 'percentage')} className={`flex-1 py-2.5 rounded-xl text-[12px] font-medium border ${f.riskMethod === 'percentage' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#070509] border-white/[0.08] text-[#9CA3AF]'}`}>Percentage</button>
+              <button onClick={() => set('riskMethod', 'fixed')} className={`flex-1 py-2.5 rounded-xl text-[12px] font-medium border ${f.riskMethod === 'fixed' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#070509] border-white/[0.08] text-[#9CA3AF]'}`}>Fixed Amount</button>
+            </div>
+            <Field label={`Default Risk Per Trade ${f.riskMethod === 'percentage' ? '(%)' : '($)'}`}><input inputMode="decimal" type="number" value={f.riskPerTrade} onChange={e => set('riskPerTrade', e.target.value)} className={inputCls} /></Field>
+            <Field label="Daily Loss Limit"><input inputMode="decimal" type="number" value={f.dailyLossLimit} onChange={e => set('dailyLossLimit', e.target.value)} className={inputCls} /></Field>
+            <Field label="Maximum Trades Per Day"><input inputMode="numeric" type="number" value={f.maxTradesPerDay} onChange={e => set('maxTradesPerDay', e.target.value)} className={inputCls} /></Field>
+            <Field label="Default Risk:Reward Target">
+              <div className="flex flex-wrap gap-2">{RR_OPTIONS.map(r => <OnboardingChip key={r} label={r} selected={f.defaultRR === r} onClick={() => set('defaultRR', r)} />)}</div>
+              {f.defaultRR === 'Custom' && <input type="text" placeholder="e.g. 1:2.5" value={f.customRR} onChange={e => set('customRR', e.target.value)} className={inputCls + ' mt-2'} />}
+            </Field>
+            <p className="text-[11px] text-[#6B7280]">These are your own preferences, not financial advice — you can change them anytime later.</p>
+          </div>
+        )}
+
+        {step === 7 && (
+          <div>
+            <p className="font-display text-[18px] font-semibold mb-3">What is the biggest area you want to improve?</p>
+            <div className="flex flex-wrap gap-2 mb-6">
+              {IMPROVEMENT_FOCUS_OPTIONS.map(o => <OnboardingChip key={o} label={o} selected={f.primaryFocus === o} onClick={() => set('primaryFocus', o)} />)}
+            </div>
+            <p className="text-[13px] text-[#9CA3AF] mb-3">Anything else you'd like to improve? (optional)</p>
+            <div className="flex flex-wrap gap-2">
+              {IMPROVEMENT_FOCUS_OPTIONS.filter(o => o !== f.primaryFocus).map(o => <OnboardingChip key={o} label={o} selected={f.secondaryFocus.includes(o)} onClick={() => toggleArr('secondaryFocus', o)} />)}
+            </div>
+          </div>
+        )}
+
+        {step === 8 && (
+          <div>
+            <p className="font-display text-[18px] font-semibold mb-4">Your Trading Profile</p>
+            <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2.5 text-[12px] mb-6">
+              <div className="flex justify-between"><span className="text-[#6B7280]">Experience</span><span>{f.experience}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Markets</span><span>{f.markets.join(' • ')}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Trading Style</span><span>{f.tradingStyle}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Primary Timeframe</span><span>{f.timeframe}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Primary Account</span><span>{f.accountName}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Starting Capital</span><span>{f.currency} {f.startingCapital}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Risk Per Trade</span><span>{f.riskPerTrade}{f.riskMethod === 'percentage' ? '%' : ` ${f.currency}`}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Daily Loss Limit</span><span>{f.dailyLossLimit}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Max Trades/Day</span><span>{f.maxTradesPerDay}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Default R:R</span><span>{f.defaultRR === 'Custom' ? f.customRR : f.defaultRR}</span></div>
+              <div className="flex justify-between"><span className="text-[#6B7280]">Improvement Focus</span><span>{f.primaryFocus}</span></div>
+            </div>
+            {error && <p className="text-[11px] text-[#EF4444] mb-3">{error}</p>}
+            <button onClick={completeSetup} disabled={saving} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white disabled:opacity-50 mb-2">{saving ? 'Setting up...' : 'Complete Setup'}</button>
+            <button onClick={() => setStep(2)} className="w-full text-[12px] text-[#6B7280] py-2">Edit</button>
+          </div>
+        )}
+      </div>
+
+      {step > 1 && step < 8 && (
+        <div className="max-w-sm mx-auto w-full mt-6">
+          <button onClick={() => setStep(s => s + 1)} disabled={!canContinue} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white disabled:opacity-40">Continue</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AuthScreen({ onAuthenticated }) {
   const [mode, setMode] = useState('login'); // login | signup | forgot
   const [fullName, setFullName] = useState('');
@@ -2931,6 +3155,17 @@ function AppShell({ user, onLogout }) {
 export default function App() {
   const [authState, setAuthState] = useState('checking'); // checking | authed | anon | recovery
   const [user, setUser] = useState(null);
+  const [onboardingStatus, setOnboardingStatus] = useState(null); // null (unknown) | 'incomplete' | 'completed' | 'skipped'
+
+  async function checkOnboarding(userId) {
+    try {
+      const profile = await apiGetProfile(userId);
+      setOnboardingStatus(profile?.onboarding_status || 'incomplete');
+    } catch (e) {
+      console.error('[Onboarding] profile check failed:', e);
+      setOnboardingStatus('incomplete');
+    }
+  }
 
   useEffect(() => {
     (async () => {
@@ -2966,12 +3201,14 @@ export default function App() {
         CURRENT_USER_ID = u.id;
         setUser(u);
         setAuthState('authed');
+        await checkOnboarding(u.id);
       } catch (e) {
         try {
           const session = await apiRefreshSession(refreshToken);
           saveSession(session);
           setUser(session.user);
           setAuthState('authed');
+          await checkOnboarding(session.user.id);
         } catch (e2) {
           clearSession();
           setAuthState('anon');
@@ -2980,18 +3217,21 @@ export default function App() {
     })();
   }, []);
 
-  function handleAuthenticated(u) {
+  async function handleAuthenticated(u) {
     setUser(u);
     setAuthState('authed');
+    await checkOnboarding(u.id);
   }
   function handleLogout() {
     clearSession();
     setUser(null);
+    setOnboardingStatus(null);
     setAuthState('anon');
   }
-  function handleResetDone(u) {
+  async function handleResetDone(u) {
     setUser(u);
     setAuthState('authed');
+    await checkOnboarding(u.id);
   }
 
   if (authState === 'checking') {
@@ -3002,6 +3242,12 @@ export default function App() {
   }
   if (authState === 'anon') {
     return <AuthScreen onAuthenticated={handleAuthenticated} />;
+  }
+  if (onboardingStatus === null) {
+    return <div className="min-h-screen w-full bg-[#030204] flex items-center justify-center"><p className="text-[12px] text-[#6B7280]">Loading...</p></div>;
+  }
+  if (onboardingStatus === 'incomplete') {
+    return <OnboardingView user={user} onComplete={() => setOnboardingStatus('completed')} />;
   }
   return <AppShell user={user} onLogout={handleLogout} />;
 }
