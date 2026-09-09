@@ -103,6 +103,24 @@ async function apiCreateTradingAccount(fields) {
   const data = await res.json();
   return data[0];
 }
+async function apiGetPrimaryTradingAccount(userId) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_accounts?user_id=eq.${userId}&is_active=eq.true&order=created_at.asc&limit=1&select=*`, { headers: HEADERS });
+  if (!res.ok) throw new Error(`Trading account read failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return data[0] || null;
+}
+async function apiUpdateTradingAccount(id, fields) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trading_accounts?id=eq.${id}`, {
+    method: 'PATCH', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(fields),
+  });
+  if (!res.ok) throw new Error(`Trading account update failed (${res.status}): ${await res.text()}`);
+  const data = await res.json();
+  return data[0];
+}
+async function apiDeleteAllTrades(userId) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/trades?user_id=eq.${userId}`, { method: 'DELETE', headers: HEADERS });
+  if (!res.ok) throw new Error(`Delete failed (${res.status}): ${await res.text()}`);
+}
 // Centralized feature-access check. Everything is free during beta —
 // this is the single place to add restrictions later without touching every screen.
 function canUseFeature(profile, featureName) {
@@ -2882,7 +2900,304 @@ function SubscriptionView({ user, onClose }) {
   );
 }
 
-function SettingsView({ user, onClose, onLogout }) {
+function SettingsRow({ label, sub, onClick, right }) {
+  return (
+    <button onClick={onClick} className="w-full flex items-center justify-between px-4 py-3.5 rounded-xl bg-[#070509] border border-white/[0.06] active:bg-[#0C0810] text-left">
+      <div className="min-w-0"><p className="text-[13px] font-medium">{label}</p>{sub && <p className="text-[11px] text-[#6B7280] mt-0.5">{sub}</p>}</div>
+      {right || <ChevronLeft size={16} className="rotate-180 text-[#6B7280] shrink-0" />}
+    </button>
+  );
+}
+function ToggleSwitch({ on, onClick }) {
+  return (
+    <button onClick={onClick} className={`w-10 h-6 rounded-full relative transition-colors shrink-0 ${on ? 'bg-[#6B21A8]' : 'bg-[#3A3B40]'}`}>
+      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${on ? 'left-[18px]' : 'left-0.5'}`} />
+    </button>
+  );
+}
+function ComingSoonRow({ label, sub }) {
+  return (
+    <div className="flex items-center justify-between px-4 py-3.5 rounded-xl bg-[#070509] border border-white/[0.06] opacity-50">
+      <div><p className="text-[13px] font-medium">{label}</p>{sub && <p className="text-[11px] text-[#6B7280] mt-0.5">{sub}</p>}</div>
+      <span className="text-[10px] px-2 py-0.5 rounded bg-[#6B21A8]/15 text-[#B58BE0] shrink-0">Coming Soon</span>
+    </div>
+  );
+}
+function SubScreenHeader({ title, onBack }) {
+  return (
+    <div className="flex items-center gap-1 mb-1">
+      <button onClick={onBack} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
+    </div>
+  );
+}
+
+function ProfileSettingsView({ user, onBack, onSaved }) {
+  const [fullName, setFullName] = useState(user?.user_metadata?.full_name || '');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  async function save() {
+    setSaving(true); setMsg('');
+    try { await apiUpdateProfile(user.id, { full_name: fullName }); setMsg('Saved.'); onSaved?.(fullName); }
+    catch (e) { setMsg(e.message || 'Could not save.'); }
+    finally { setSaving(false); }
+  }
+  const memberSince = user?.created_at ? new Date(user.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long' }) : '';
+  return (
+    <>
+      <SubScreenHeader title="Profile" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
+        <Field label="Full Name"><input type="text" value={fullName} onChange={e => setFullName(e.target.value)} className={inputCls} /></Field>
+        <Field label="Email"><input type="text" value={user?.email || ''} disabled className={inputCls + ' opacity-50'} /></Field>
+        {memberSince && <p className="text-[11px] text-[#6B7280]">Member since {memberSince}</p>}
+        {msg && <p className="text-[11px] text-[#B58BE0]">{msg}</p>}
+        <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl font-display text-[12px] font-semibold bg-[#6B21A8] text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+      </div>
+    </>
+  );
+}
+
+function TradingPreferencesView({ user, onBack }) {
+  const [profile, setProfile] = useState(null);
+  const [account, setAccount] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [f, setF] = useState({ base_currency: 'USD', timezone: '', experience_level: '', primary_trading_style: '', preferred_markets: [], primary_timeframe: '' });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [p, a] = await Promise.all([apiGetProfile(user.id), apiGetPrimaryTradingAccount(user.id)]);
+        setProfile(p); setAccount(a);
+        if (p) setF({
+          base_currency: p.base_currency || 'USD', timezone: p.timezone || '', experience_level: p.experience_level || '',
+          primary_trading_style: p.primary_trading_style || '', preferred_markets: p.preferred_markets || [], primary_timeframe: p.primary_timeframe || '',
+        });
+      } catch (e) { console.error(e); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+  const toggleMarket = (m) => setF(prev => ({ ...prev, preferred_markets: prev.preferred_markets.includes(m) ? prev.preferred_markets.filter(x => x !== m) : [...prev.preferred_markets, m] }));
+
+  async function save() {
+    setSaving(true); setMsg('');
+    try { await apiUpdateProfile(user.id, f); setMsg('Saved. This will not change any past trades.'); }
+    catch (e) { setMsg(e.message || 'Could not save.'); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <><SubScreenHeader title="Trading Preferences" onBack={onBack} /><p className="text-[12px] text-[#6B7280]">Loading...</p></>;
+
+  return (
+    <>
+      <SubScreenHeader title="Trading Preferences" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
+        <Field label="Base Currency"><div className="flex flex-wrap gap-2">{CURRENCIES.map(c => <OnboardingChip key={c} label={c} selected={f.base_currency === c} onClick={() => set('base_currency', c)} />)}</div></Field>
+        <Field label="Timezone">
+          <div className="flex items-center justify-between rounded-xl bg-[#1F1A29] border border-white/[0.08] px-3.5 py-2.5">
+            <span className="text-[13px]">{f.timezone || 'Not set'}</span>
+            <button onClick={() => set('timezone', Intl.DateTimeFormat().resolvedOptions().timeZone)} className="text-[11px] text-[#B58BE0]">Use current</button>
+          </div>
+        </Field>
+        <Field label="Trading Experience"><div className="flex flex-wrap gap-2">{EXPERIENCE_LEVELS.map(o => <OnboardingChip key={o} label={o} selected={f.experience_level === o} onClick={() => set('experience_level', o)} />)}</div></Field>
+        <Field label="Primary Trading Style"><div className="flex flex-wrap gap-2">{TRADING_STYLES.map(o => <OnboardingChip key={o} label={o} selected={f.primary_trading_style === o} onClick={() => set('primary_trading_style', o)} />)}</div></Field>
+        <Field label="Preferred Markets"><div className="flex flex-wrap gap-2">{ONBOARDING_MARKETS.map(o => <OnboardingChip key={o} label={o} selected={f.preferred_markets.includes(o)} onClick={() => toggleMarket(o)} />)}</div></Field>
+        <Field label="Preferred Timeframe"><div className="flex flex-wrap gap-2">{TIMEFRAMES.map(o => <OnboardingChip key={o} label={o} selected={f.primary_timeframe === o} onClick={() => set('primary_timeframe', o)} />)}</div></Field>
+        {msg && <p className="text-[11px] text-[#B58BE0]">{msg}</p>}
+        <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl font-display text-[12px] font-semibold bg-[#6B21A8] text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+      </div>
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Primary Account</p>
+        {account ? (
+          <p className="text-[13px]">{account.account_name} · {account.currency} {account.starting_capital}</p>
+        ) : <p className="text-[12px] text-[#6B7280]">No account found.</p>}
+        <p className="text-[11px] text-[#6B7280] mt-2">Managing multiple trading accounts is coming soon.</p>
+      </div>
+    </>
+  );
+}
+
+function RiskPreferencesView({ user, onBack }) {
+  const [account, setAccount] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [f, setF] = useState({ default_risk_method: 'percentage', default_risk_value: '', daily_loss_limit: '', max_trades_per_day: '', default_rr: '1:2' });
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const a = await apiGetPrimaryTradingAccount(user.id);
+        setAccount(a);
+        if (a) setF({
+          default_risk_method: a.default_risk_method || 'percentage', default_risk_value: a.default_risk_value ?? '',
+          daily_loss_limit: a.daily_loss_limit ?? '', max_trades_per_day: a.max_trades_per_day ?? '', default_rr: a.default_rr || '1:2',
+        });
+      } catch (e) { console.error(e); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  const set = (k, v) => setF(prev => ({ ...prev, [k]: v }));
+
+  async function save() {
+    if (!account) { setMsg('No trading account found to attach these preferences to.'); return; }
+    setSaving(true); setMsg('');
+    try {
+      await apiUpdateTradingAccount(account.id, {
+        default_risk_method: f.default_risk_method, default_risk_value: Number(f.default_risk_value) || null,
+        daily_loss_limit: Number(f.daily_loss_limit) || null, max_trades_per_day: Number(f.max_trades_per_day) || null, default_rr: f.default_rr,
+      });
+      setMsg('Saved.');
+    } catch (e) { setMsg(e.message || 'Could not save.'); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <><SubScreenHeader title="Risk Preferences" onBack={onBack} /><p className="text-[12px] text-[#6B7280]">Loading...</p></>;
+
+  return (
+    <>
+      <SubScreenHeader title="Risk Preferences" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
+        <Field label="Risk Method">
+          <div className="flex gap-2">
+            <button onClick={() => set('default_risk_method', 'percentage')} className={`flex-1 py-2.5 rounded-xl text-[12px] font-medium border ${f.default_risk_method === 'percentage' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#1F1A29] border-white/[0.08] text-[#9CA3AF]'}`}>Percentage</button>
+            <button onClick={() => set('default_risk_method', 'fixed')} className={`flex-1 py-2.5 rounded-xl text-[12px] font-medium border ${f.default_risk_method === 'fixed' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#1F1A29] border-white/[0.08] text-[#9CA3AF]'}`}>Fixed Amount</button>
+          </div>
+        </Field>
+        <Field label="Default Risk Per Trade"><input inputMode="decimal" type="number" value={f.default_risk_value} onChange={e => set('default_risk_value', e.target.value)} className={inputCls} /></Field>
+        <Field label="Daily Loss Limit"><input inputMode="decimal" type="number" value={f.daily_loss_limit} onChange={e => set('daily_loss_limit', e.target.value)} className={inputCls} /></Field>
+        <Field label="Maximum Trades Per Day"><input inputMode="numeric" type="number" value={f.max_trades_per_day} onChange={e => set('max_trades_per_day', e.target.value)} className={inputCls} /></Field>
+        <Field label="Default Risk:Reward"><div className="flex flex-wrap gap-2">{RR_OPTIONS.filter(r => r !== 'Custom').map(r => <OnboardingChip key={r} label={r} selected={f.default_rr === r} onClick={() => set('default_rr', r)} />)}</div></Field>
+        <p className="text-[11px] text-[#6B7280]">These are your own preferences, not financial advice.</p>
+        {msg && <p className="text-[11px] text-[#B58BE0]">{msg}</p>}
+        <button onClick={save} disabled={saving} className="w-full py-3 rounded-xl font-display text-[12px] font-semibold bg-[#6B21A8] text-white disabled:opacity-50">{saving ? 'Saving...' : 'Save'}</button>
+      </div>
+    </>
+  );
+}
+
+function JournalPreferencesView({ onBack }) {
+  return (
+    <>
+      <SubScreenHeader title="Journal Preferences" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[13px] font-medium mb-1">Custom tags & categories</p>
+        <p className="text-[12px] text-[#6B7280] leading-relaxed">A dedicated tagging system (Strategy, Setup, Psychology, Mistake categories) is coming soon. Right now these are already free-text fields on each trade in the Trades tab.</p>
+      </div>
+    </>
+  );
+}
+
+const NOTIFICATION_TYPES = [
+  ['daily_reminder', 'Daily Trading Reminder'], ['journal_reminder', 'Journal Reminder'],
+  ['risk_limit_warning', 'Risk Limit Warning'], ['rule_violation_alert', 'Rule Violation Alert'],
+  ['weekly_review', 'Weekly Performance Review'], ['product_updates', 'Product Updates'], ['giveaway_updates', 'Giveaway Updates'],
+];
+function NotificationsPreferencesView({ user, onBack }) {
+  const [prefs, setPrefs] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try { const p = await apiGetProfile(user.id); setPrefs(p?.notification_preferences || {}); }
+      catch (e) { console.error(e); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  async function toggle(key) {
+    const updated = { ...prefs, [key]: !prefs[key] };
+    setPrefs(updated);
+    setSaving(true);
+    try { await apiUpdateProfile(user.id, { notification_preferences: updated }); }
+    catch (e) { console.error(e); }
+    finally { setSaving(false); }
+  }
+
+  if (loading) return <><SubScreenHeader title="Notifications" onBack={onBack} /><p className="text-[12px] text-[#6B7280]">Loading...</p></>;
+
+  return (
+    <>
+      <SubScreenHeader title="Notifications" onBack={onBack} />
+      <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3">
+        <p className="text-[11px] text-[#F59E0B] leading-relaxed">Notification delivery isn't live yet — these are saved as your preferences for when it launches, nothing will be sent right now.</p>
+      </div>
+      <div className="space-y-2">
+        {NOTIFICATION_TYPES.map(([key, label]) => (
+          <div key={key} className="flex items-center justify-between px-4 py-3.5 rounded-xl bg-[#070509] border border-white/[0.06]">
+            <p className="text-[13px]">{label}</p>
+            <ToggleSwitch on={!!prefs[key]} onClick={() => toggle(key)} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
+function AppearanceView({ onBack }) {
+  return (
+    <>
+      <SubScreenHeader title="Appearance" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Theme</p>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between rounded-xl bg-[#6B21A8]/15 border border-[#6B21A8]/50 px-4 py-3">
+            <span className="text-[13px] font-medium text-[#B58BE0]">Dark</span>
+            <Check size={16} className="text-[#B58BE0]" />
+          </div>
+          <ComingSoonRow label="Light" />
+          <ComingSoonRow label="System" />
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DataPrivacyView({ user, onBack }) {
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  async function deleteTrades() {
+    setDeleting(true);
+    try {
+      await apiDeleteAllTrades(user.id);
+      setMsg('All your trades have been deleted.');
+      setConfirming(false);
+    } catch (e) { setMsg(e.message || 'Could not delete trades.'); }
+    finally { setDeleting(false); }
+  }
+
+  return (
+    <>
+      <SubScreenHeader title="Data & Privacy" onBack={onBack} />
+      <ComingSoonRow label="Export My Trading Data" sub="CSV/JSON export of trades, journal & settings" />
+      <div className="rounded-2xl bg-[#EF4444]/5 border border-[#EF4444]/20 p-5">
+        <p className="text-[13px] font-medium text-[#EF4444] mb-1">Delete Trading Data</p>
+        <p className="text-[12px] text-[#9CA3AF] mb-3">Permanently deletes every trade you've logged. This cannot be undone. Your account and settings stay intact.</p>
+        {msg && <p className="text-[11px] text-[#B58BE0] mb-2">{msg}</p>}
+        {!confirming ? (
+          <button onClick={() => setConfirming(true)} className="w-full py-3 rounded-xl text-[12px] font-medium text-[#EF4444] border border-[#EF4444]/40">Delete All Trades</button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[12px] text-[#EF4444]">Are you absolutely sure? This is permanent.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setConfirming(false)} className="flex-1 py-2.5 rounded-xl text-[12px] bg-[#1F1A29] text-[#9CA3AF]">Cancel</button>
+              <button onClick={deleteTrades} disabled={deleting} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold bg-[#EF4444] text-white disabled:opacity-50">{deleting ? 'Deleting...' : 'Yes, Delete'}</button>
+            </div>
+          </div>
+        )}
+      </div>
+      <ComingSoonRow label="Delete Account" sub="Permanently removes your account and all data" />
+    </>
+  );
+}
+
+function SecuritySettingsView({ user, onBack, onLogout }) {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
   const [saving, setSaving] = useState(false);
@@ -2898,67 +3213,98 @@ function SettingsView({ user, onClose, onLogout }) {
       await apiChangePassword(newPassword);
       setSavedMsg('Password updated successfully.');
       setNewPassword(''); setConfirmNewPassword('');
-    } catch (e) {
-      setError(e.message || 'Could not update password.');
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { setError(e.message || 'Could not update password.'); }
+    finally { setSaving(false); }
   }
 
   return (
     <>
-      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
-
-      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Profile</p>
-        <p className="text-[13px] font-medium">{user?.user_metadata?.full_name || 'Trader'}</p>
-        <p className="text-[12px] text-[#6B7280] mt-1">{user?.email}</p>
-      </div>
-
+      <SubScreenHeader title="Security" onBack={onBack} />
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
-        <p className="text-[10px] tracking-wide text-[#6B7280]">Security — Change Password</p>
+        <p className="text-[10px] tracking-wide text-[#6B7280]">Change Password</p>
         <Field label="New Password"><input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className={inputCls} /></Field>
         <Field label="Confirm New Password"><input type="password" value={confirmNewPassword} onChange={e => setConfirmNewPassword(e.target.value)} className={inputCls} /></Field>
         {error && <p className="text-[11px] text-[#EF4444]">{error}</p>}
         {savedMsg && <p className="text-[11px] text-[#22C55E]">{savedMsg}</p>}
         <button onClick={handleChangePassword} disabled={saving || !newPassword} className="w-full py-3 rounded-xl font-display text-[12px] font-semibold bg-[#6B21A8] text-white disabled:opacity-40">{saving ? 'Updating...' : 'Update Password'}</button>
       </div>
+      <ComingSoonRow label="Sign Out From Other Sessions" />
+      <button onClick={onLogout} className="w-full py-3 rounded-xl text-[12px] font-medium text-[#EF4444] border border-[#EF4444]/30">Log Out</button>
+    </>
+  );
+}
 
-      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Account</p>
-        <div className="flex justify-between text-[12px] py-1"><span className="text-[#6B7280]">Plan</span><span>Free</span></div>
-        <div className="flex justify-between text-[12px] py-1"><span className="text-[#6B7280]">Status</span><span className="text-[#22C55E]">Active</span></div>
-        <p className="text-[10px] text-[#6B7280] mt-2">Premium plans are coming soon.</p>
+function HelpSupportView({ onBack }) {
+  return (
+    <>
+      <SubScreenHeader title="Help & Support" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2">
+        {SUPPORT_TELEGRAM_URL ? (
+          <a href={SUPPORT_TELEGRAM_URL} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3"><span className="text-[12px] font-medium">Telegram</span><span className="text-[11px] text-[#B58BE0]">Open →</span></a>
+        ) : <ComingSoonRow label="Telegram" />}
+        {SUPPORT_EMAIL ? (
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3"><span className="text-[12px] font-medium">Email</span><span className="text-[11px] text-[#B58BE0]">{SUPPORT_EMAIL}</span></a>
+        ) : <ComingSoonRow label="Email" />}
+        {SUPPORT_EMAIL && (
+          <a href={`mailto:${SUPPORT_EMAIL}?subject=Bug%20Report`} className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3"><span className="text-[12px] font-medium">Report a Bug</span><span className="text-[11px] text-[#B58BE0]">→</span></a>
+        )}
+        {SUPPORT_EMAIL && (
+          <a href={`mailto:${SUPPORT_EMAIL}?subject=Feature%20Suggestion`} className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3"><span className="text-[12px] font-medium">Suggest a Feature</span><span className="text-[11px] text-[#B58BE0]">→</span></a>
+        )}
       </div>
+    </>
+  );
+}
 
-      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
-        <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Contact Us</p>
-        <div className="space-y-2">
-          {SUPPORT_TELEGRAM_URL ? (
-            <a href={SUPPORT_TELEGRAM_URL} target="_blank" rel="noopener noreferrer" className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3">
-              <span className="text-[12px] font-medium">Telegram</span>
-              <span className="text-[11px] text-[#B58BE0]">Open →</span>
-            </a>
-          ) : (
-            <div className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3 opacity-50">
-              <span className="text-[12px] font-medium">Telegram</span>
-              <span className="text-[11px] text-[#6B7280]">Coming soon</span>
-            </div>
-          )}
-          {SUPPORT_EMAIL ? (
-            <a href={`mailto:${SUPPORT_EMAIL}`} className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3">
-              <span className="text-[12px] font-medium">Email</span>
-              <span className="text-[11px] text-[#B58BE0]">{SUPPORT_EMAIL}</span>
-            </a>
-          ) : (
-            <div className="flex items-center justify-between rounded-xl bg-[#0C0810] border border-white/[0.08] px-4 py-3 opacity-50">
-              <span className="text-[12px] font-medium">Email</span>
-              <span className="text-[11px] text-[#6B7280]">Coming soon</span>
-            </div>
-          )}
-        </div>
+function AboutView({ onBack }) {
+  return (
+    <>
+      <SubScreenHeader title="About" onBack={onBack} />
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 text-center">
+        <p className="font-display text-[16px] font-bold">RTradeXworld</p>
+        <p className="text-[11px] text-[#B58BE0] mt-1">The Trader Performance Ecosystem</p>
+        <p className="text-[11px] text-[#6B7280] mt-3">Version 1.0.0</p>
       </div>
+      <ComingSoonRow label="Terms & Conditions" />
+      <ComingSoonRow label="Privacy Policy" />
+      <ComingSoonRow label="Risk Disclaimer" />
+    </>
+  );
+}
 
+function SettingsView({ user, onClose, onLogout }) {
+  const [section, setSection] = useState(null);
+
+  if (section === 'profile') return <ProfileSettingsView user={user} onBack={() => setSection(null)} />;
+  if (section === 'trading') return <TradingPreferencesView user={user} onBack={() => setSection(null)} />;
+  if (section === 'risk') return <RiskPreferencesView user={user} onBack={() => setSection(null)} />;
+  if (section === 'journal') return <JournalPreferencesView onBack={() => setSection(null)} />;
+  if (section === 'notifications') return <NotificationsPreferencesView user={user} onBack={() => setSection(null)} />;
+  if (section === 'appearance') return <AppearanceView onBack={() => setSection(null)} />;
+  if (section === 'data') return <DataPrivacyView user={user} onBack={() => setSection(null)} />;
+  if (section === 'security') return <SecuritySettingsView user={user} onBack={() => setSection(null)} onLogout={onLogout} />;
+  if (section === 'help') return <HelpSupportView onBack={() => setSection(null)} />;
+  if (section === 'about') return <AboutView onBack={() => setSection(null)} />;
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[13px] font-medium">{user?.user_metadata?.full_name || 'Trader'}</p>
+        <p className="text-[12px] text-[#6B7280] mt-1">{user?.email}</p>
+      </div>
+      <div className="space-y-2">
+        <SettingsRow label="Profile" sub="Name, email, member since" onClick={() => setSection('profile')} />
+        <SettingsRow label="Trading Preferences" sub="Currency, markets, style, timeframe" onClick={() => setSection('trading')} />
+        <SettingsRow label="Risk Preferences" sub="Default risk, loss limits, R:R" onClick={() => setSection('risk')} />
+        <SettingsRow label="Journal Preferences" sub="Tags & categories" onClick={() => setSection('journal')} />
+        <SettingsRow label="Notifications" sub="Reminders & alerts" onClick={() => setSection('notifications')} />
+        <SettingsRow label="Appearance" sub="Theme" onClick={() => setSection('appearance')} />
+        <SettingsRow label="Data & Privacy" sub="Export, delete data" onClick={() => setSection('data')} />
+        <SettingsRow label="Security" sub="Password, sign out" onClick={() => setSection('security')} />
+        <SettingsRow label="Help & Support" sub="Contact, bugs, feedback" onClick={() => setSection('help')} />
+        <SettingsRow label="About" sub="Version, legal" onClick={() => setSection('about')} />
+      </div>
       <button onClick={onLogout} className="w-full py-3 rounded-xl text-[12px] font-medium text-[#EF4444] border border-[#EF4444]/30">Log Out</button>
     </>
   );
