@@ -1700,6 +1700,7 @@ function RuleEngineView({ trades, onClose }) {
 // ===== MULTI-ASSET POSITION SIZE CALCULATOR =====
 const FX_BROKERS = ['XM', 'Exness', 'Vantage', 'Elfin', 'WinproFx', 'Zuperior'];
 const CRYPTO_EXCHANGES = ['Delta Exchange', 'CoinDCX', 'CoinSwitch'];
+const CRYPTO_SYMBOLS = ['BTCUSD', 'BTCUSDT', 'ETHUSD', 'ETHUSDT', 'SOLUSDT'];
 
 const FOREX_PAIRS = ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'USD/CAD', 'NZD/USD', 'EUR/GBP', 'EUR/JPY', 'EUR/CHF', 'EUR/AUD', 'EUR/CAD', 'EUR/NZD', 'GBP/JPY', 'GBP/CHF', 'GBP/AUD', 'GBP/CAD', 'GBP/NZD', 'AUD/JPY', 'AUD/NZD', 'AUD/CAD', 'AUD/CHF', 'CAD/JPY', 'CHF/JPY', 'NZD/JPY'];
 
@@ -1725,23 +1726,25 @@ const INDEX_PRESETS = {
 const RISK_PRESETS = [0.25, 0.5, 1, 1.5, 2, 3];
 
 function PositionSizeCalculator({ startingBalance, onClose }) {
-  const [stage, setStage] = useState('market'); // market | fxBroker | cryptoComingSoon | assetClass | inputs
+  const [stage, setStage] = useState('market'); // market | fxBroker | cryptoBroker | assetClass | inputs
   const [broker, setBroker] = useState(null);
   const [assetClass, setAssetClass] = useState(null);
   const [symbol, setSymbol] = useState('');
   const [customSymbol, setCustomSymbol] = useState('');
 
   const [accountBalance, setAccountBalance] = useState(startingBalance > 0 ? String(startingBalance.toFixed(2)) : '');
+  const [accountCurrency, setAccountCurrency] = useState('USD');
   const [riskPct, setRiskPct] = useState('1');
   const [direction, setDirection] = useState('buy');
   const [entry, setEntry] = useState('');
   const [stopLoss, setStopLoss] = useState('');
   const [takeProfit, setTakeProfit] = useState('');
-  const [conversionRate, setConversionRate] = useState('1');
+  const [conversionRate, setConversionRate] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showCalcDetail, setShowCalcDetail] = useState(false);
 
   const activeSymbol = symbol === 'custom' ? customSymbol : symbol;
+  const CRYPTO_STEPS = { BTCUSD: 0.0001, BTCUSDT: 0.0001, ETHUSD: 0.001, ETHUSDT: 0.001, SOLUSDT: 0.01 };
 
   function defaultSpecFor(cls, sym) {
     if (cls === 'Forex') {
@@ -1756,6 +1759,10 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
       const p = INDEX_PRESETS[sym] || { valuePerPoint: 1, step: 0.1, min: 0.1, max: 500 };
       return { unitLabel: 'Contracts', pointLabel: '1 point', valuePerPoint: p.valuePerPoint, step: p.step, min: p.min, max: p.max, methodLabel: 'Point Value Method' };
     }
+    if (cls === 'Crypto') {
+      const step = CRYPTO_STEPS[sym] || 0.0001;
+      return { unitLabel: 'Coins', pointLabel: '$1.00 move', valuePerPoint: 1, step, min: step, max: 1000000, methodLabel: 'Quantity Method' };
+    }
     return { unitLabel: 'Units', pointLabel: '$1.00 move', valuePerPoint: 1, step: 0.01, min: 0.01, max: 10000, methodLabel: 'Custom CFD Specification' };
   }
 
@@ -1767,7 +1774,24 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
   const entryN = parseFloat(entry);
   const stopN = parseFloat(stopLoss);
   const tpN = parseFloat(takeProfit);
-  const convN = parseFloat(conversionRate) || 1;
+
+  // ===== SAFE CURRENCY CONVERSION — never silently assume a rate of 1 when one is actually required =====
+  function getCurrencyPair(cls, sym) {
+    if (cls === 'Forex' && sym.includes('/')) { const [base, quote] = sym.split('/'); return { base, quote }; }
+    if (cls === 'Crypto') return { base: sym.replace(/USDT?$/, ''), quote: 'USD' }; // USDT treated as USD-equivalent
+    return { base: null, quote: 'USD' }; // Commodities/Indices presets are USD-denominated built-ins
+  }
+  const { base: pairBase, quote: pairQuote } = getCurrencyPair(assetClass, activeSymbol);
+  let convInfo = { rate: 1, needsManual: false };
+  if (pairQuote && pairQuote !== accountCurrency) {
+    if (pairBase === accountCurrency && !isNaN(entryN) && entryN > 0) {
+      convInfo = { rate: 1 / entryN, needsManual: false }; // e.g. USDJPY with USD account: auto-derived from entry price
+    } else {
+      convInfo = { rate: null, needsManual: true }; // e.g. GBPJPY with USD account: cannot be safely assumed
+    }
+  }
+  const manualRateN = parseFloat(conversionRate);
+  const convN = convInfo.needsManual ? (manualRateN > 0 ? manualRateN : null) : convInfo.rate;
 
   const directionValid = !isNaN(entryN) && !isNaN(stopN) && (
     direction === 'buy' ? stopN < entryN : stopN > entryN
@@ -1775,7 +1799,7 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
   const tpProvided = takeProfit !== '' && !isNaN(tpN);
   const tpDirectionValid = !tpProvided || (direction === 'buy' ? tpN > entryN : tpN < entryN);
 
-  const inputsReady = !isNaN(balN) && balN > 0 && !isNaN(riskPctN) && riskPctN > 0 && !isNaN(entryN) && !isNaN(stopN) && entryN !== stopN;
+  const inputsReady = !isNaN(balN) && balN > 0 && !isNaN(riskPctN) && riskPctN > 0 && !isNaN(entryN) && !isNaN(stopN) && entryN !== stopN && convN !== null;
 
   let result = null;
   if (inputsReady && directionValid && tpDirectionValid) {
@@ -1783,7 +1807,7 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
     const priceDistance = Math.abs(entryN - stopN);
     const riskPerUnit = priceDistance * spec.valuePerPoint * convN;
     const rawSize = riskPerUnit > 0 ? riskAmount / riskPerUnit : 0;
-    let finalSize = Math.floor(rawSize / spec.step) * spec.step;
+    let finalSize = Math.floor(rawSize / spec.step + 1e-9) * spec.step; // epsilon guards against float rounding under-shooting an exact step
     finalSize = Math.min(Math.max(finalSize, 0), spec.max);
     finalSize = Number(finalSize.toFixed(6));
     const actualRisk = finalSize * riskPerUnit;
@@ -1812,7 +1836,7 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
           <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2">
             <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Choose Market</p>
             <button onClick={() => setStage('fxBroker')} className="w-full text-left py-3.5 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px] font-medium">Foreign Exchange</button>
-            <button onClick={() => setStage('cryptoComingSoon')} className="w-full text-left py-3.5 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px] font-medium">Indian Crypto Futures Exchange</button>
+            <button onClick={() => setStage('cryptoBroker')} className="w-full text-left py-3.5 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px] font-medium">Crypto</button>
           </div>
         )}
 
@@ -1825,13 +1849,12 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
           </div>
         )}
 
-        {stage === 'cryptoComingSoon' && (
-          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center space-y-3">
-            <p className="text-[10px] tracking-wide text-[#6B7280]">Indian Crypto Futures Exchange</p>
+        {stage === 'cryptoBroker' && (
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-2">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Choose Exchange</p>
             {CRYPTO_EXCHANGES.map(x => (
-              <div key={x} className="py-3 px-4 rounded-xl bg-[#0C0810] border border-white/[0.06] text-[13px] text-[#6B7280]">{x} <span className="text-[10px]">— coming soon</span></div>
+              <button key={x} onClick={() => { setBroker(x); setAssetClass('Crypto'); setSymbol(''); setStage('inputs'); }} className="w-full text-left py-3 px-4 rounded-xl bg-[#0C0810] border border-white/[0.08] text-[13px]">{x}</button>
             ))}
-            <p className="text-[11px] text-[#6B7280]">Crypto futures position sizing (Delta, CoinDCX, CoinSwitch) is planned as its own upgrade. Foreign Exchange is fully supported now.</p>
           </div>
         )}
 
@@ -1854,6 +1877,7 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
                   {assetClass === 'Forex' && FOREX_PAIRS.map(p => <option key={p} value={p}>{p}</option>)}
                   {assetClass === 'Commodities' && Object.entries(COMMODITY_PRESETS).map(([k, v]) => <option key={k} value={k}>{k} — {v.name}</option>)}
                   {assetClass === 'Indices' && Object.entries(INDEX_PRESETS).map(([k, v]) => <option key={k} value={k}>{k} — {v.name}</option>)}
+                  {assetClass === 'Crypto' && CRYPTO_SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
                   <option value="custom">Custom / Other</option>
                 </select>
               </Field>
@@ -1863,13 +1887,19 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Account Balance"><input inputMode="decimal" type="number" value={accountBalance} onChange={e => setAccountBalance(e.target.value)} className={inputCls} /></Field>
-                    <Field label="Direction">
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <button onClick={() => setDirection('buy')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${direction === 'buy' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>Buy</button>
-                        <button onClick={() => setDirection('sell')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${direction === 'sell' ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>Sell</button>
-                      </div>
+                    <Field label="Account Currency">
+                      <select value={accountCurrency} onChange={e => setAccountCurrency(e.target.value)} className={inputCls}>
+                        {['USD', 'EUR', 'GBP', 'INR', 'JPY', 'AUD', 'CAD', 'CHF', 'NZD'].map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     </Field>
                   </div>
+
+                  <Field label="Direction">
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <button onClick={() => setDirection('buy')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${direction === 'buy' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>Buy</button>
+                      <button onClick={() => setDirection('sell')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${direction === 'sell' ? 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>Sell</button>
+                    </div>
+                  </Field>
 
                   <Field label="Risk">
                     <div className="flex gap-1.5 flex-wrap mb-2">
@@ -1893,10 +1923,19 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
                     <p className="text-[11px] text-[#EF4444]">Invalid Take Profit for selected trade direction.</p>
                   )}
 
+                  {convInfo.needsManual && (
+                    <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 p-4 space-y-2">
+                      <p className="text-[12px] text-[#F59E0B] font-medium">Currency conversion required</p>
+                      <p className="text-[11px] text-[#F59E0B]/90 leading-relaxed">{pairQuote} isn't your account currency ({accountCurrency}), and this rate can't be safely assumed. Enter the current {pairQuote}→{accountCurrency} rate to continue — we never guess this.</p>
+                      <Field label={`1 ${pairQuote} = ? ${accountCurrency}`}><input inputMode="decimal" type="number" value={conversionRate} onChange={e => setConversionRate(e.target.value)} className={inputCls} /></Field>
+                      {conversionRate !== '' && !(manualRateN > 0) && <p className="text-[11px] text-[#EF4444]">Enter a valid positive rate.</p>}
+                    </div>
+                  )}
+
                   <button onClick={() => setShowAdvanced(v => !v)} className="text-[11px] text-[#B58BE0]">{showAdvanced ? 'Hide' : 'Show'} Advanced Instrument Specification</button>
                   {showAdvanced && (
                     <div className="space-y-3 pt-2 border-t border-white/[0.06]">
-                      <p className="text-[10px] text-[#6B7280]">Defaults are estimates — edit to match your broker's actual contract specification.</p>
+                      <p className="text-[10px] text-[#6B7280]">Built-in specification — edit only if you've verified your broker's actual contract spec differs.</p>
                       <Field label={`Value per ${spec.pointLabel} per ${spec.unitLabel.toLowerCase().slice(0, -1)}`}>
                         <input inputMode="decimal" type="number" value={spec.valuePerPoint} onChange={e => setSpec(s => ({ ...s, valuePerPoint: parseFloat(e.target.value) || 0 }))} className={inputCls} />
                       </Field>
@@ -1905,9 +1944,6 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
                         <Field label="Step"><input inputMode="decimal" type="number" value={spec.step} onChange={e => setSpec(s => ({ ...s, step: parseFloat(e.target.value) || 0.01 }))} className={inputCls} /></Field>
                         <Field label="Max"><input inputMode="decimal" type="number" value={spec.max} onChange={e => setSpec(s => ({ ...s, max: parseFloat(e.target.value) || 0 }))} className={inputCls} /></Field>
                       </div>
-                      {assetClass === 'Forex' && (
-                        <Field label="Manual Conversion Rate (to account currency)"><input inputMode="decimal" type="number" value={conversionRate} onChange={e => setConversionRate(e.target.value)} className={inputCls} /></Field>
-                      )}
                     </div>
                   )}
                 </>
@@ -1940,6 +1976,7 @@ function PositionSizeCalculator({ startingBalance, onClose }) {
                     <p>Final Size (floored to step {spec.step}): {result.finalSize}</p>
                   </div>
                 )}
+                <p className="text-[10px] text-[#B58BE0]/70 leading-relaxed pt-1 border-t border-white/[0.08]">Position sizing is a risk-management calculation, not financial advice. Actual results may vary due to broker/exchange specifications, execution, slippage, fees, leverage, and market conditions.</p>
               </div>
             )}
           </>
