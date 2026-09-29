@@ -1993,18 +1993,30 @@ function RiskManagementView({ trades, onClose }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [savedMsg, setSavedMsg] = useState(false);
+  const [tradingAccount, setTradingAccount] = useState(null);
+  const [rules, setRules] = useState([]);
 
   const [calcEntry, setCalcEntry] = useState('');
   const [calcStop, setCalcStop] = useState('');
   const [calcRiskPct, setCalcRiskPct] = useState('1');
   const [showCalc, setShowCalc] = useState(false);
 
+  const [plannedEntry, setPlannedEntry] = useState('');
+  const [plannedStop, setPlannedStop] = useState('');
+  const [plannedSize, setPlannedSize] = useState('');
+
   useEffect(() => {
     (async () => {
       try {
-        const bal = await apiGetAccountSettings();
+        const [bal, acct, ruleList] = await Promise.all([
+          apiGetAccountSettings(),
+          CURRENT_USER_ID ? apiGetPrimaryTradingAccount(CURRENT_USER_ID) : null,
+          apiRulesList(),
+        ]);
         setStartingBalance(bal);
         setBalanceInput(String(bal));
+        setTradingAccount(acct);
+        setRules(ruleList);
       } catch (e) { setError(e.message); }
       finally { setLoading(false); }
     })();
@@ -2043,6 +2055,67 @@ function RiskManagementView({ trades, onClose }) {
   const avgRiskPct = riskyTrades.length > 0 ? riskyTrades.reduce((a, t) => a + (Number(t.risk) / startingBalance) * 100, 0) / riskyTrades.length : null;
 
   const equityMismatch = startingBalance > 0 && Math.abs(totalPnl) > startingBalance * 3;
+
+  // ===== PHASE 6: RISK CONTROL ENGINE =====
+  // Rule Engine (trading_rules) is authoritative when a rule is enabled there — Settings (trading_accounts)
+  // only fills in as a default when no such rule exists. This avoids two systems silently disagreeing.
+  const enabledRules = rules.filter(r => r.enabled);
+  const ruleMaxTrades = enabledRules.find(r => r.ruleType === 'max_trades_per_day')?.threshold;
+  const ruleDailyLoss = enabledRules.find(r => r.ruleType === 'max_daily_loss')?.threshold;
+  const ruleMaxRiskPerTrade = enabledRules.find(r => r.ruleType === 'max_risk_per_trade')?.threshold;
+
+  const effectiveMaxTrades = ruleMaxTrades ?? tradingAccount?.max_trades_per_day ?? null;
+  const effectiveDailyLossLimit = ruleDailyLoss ?? tradingAccount?.daily_loss_limit ?? null;
+  const effectiveMaxRiskPerTrade = ruleMaxRiskPerTrade ?? null;
+  const defaultRiskValue = tradingAccount?.default_risk_value ?? null;
+  const defaultRiskMethod = tradingAccount?.default_risk_method ?? 'percentage';
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const todaysTrades = trades.filter(t => t.date === todayStr);
+  const todaysGrossProfit = todaysTrades.filter(t => Number(t.pnl) > 0).reduce((a, t) => a + Number(t.pnl), 0);
+  const todaysGrossLoss = Math.abs(todaysTrades.filter(t => Number(t.pnl) < 0).reduce((a, t) => a + Number(t.pnl), 0));
+  const todaysNetPnl = todaysGrossProfit - todaysGrossLoss;
+  const dailyLossUsedPct = effectiveDailyLossLimit ? (todaysGrossLoss / effectiveDailyLossLimit) * 100 : null;
+  const remainingDailyCapacity = effectiveDailyLossLimit !== null ? Math.max(0, effectiveDailyLossLimit - todaysGrossLoss) : null;
+  const dailyLimitReached = effectiveDailyLossLimit !== null && todaysGrossLoss >= effectiveDailyLossLimit;
+  const remainingTrades = effectiveMaxTrades !== null ? Math.max(0, effectiveMaxTrades - todaysTrades.length) : null;
+  const tradesLimitReached = effectiveMaxTrades !== null && todaysTrades.length >= effectiveMaxTrades;
+
+  // Consecutive streaks (current + longest), only over trades with a real realized outcome
+  const closedChron = chronological.filter(t => t.pnl !== null && t.pnl !== undefined && t.pnl !== 0);
+  let curStreak = 0, curStreakType = null, longestWin = 0, longestLoss = 0, runWin = 0, runLoss = 0;
+  closedChron.forEach(t => {
+    const isWin = Number(t.pnl) > 0;
+    if (isWin) { runWin++; runLoss = 0; longestWin = Math.max(longestWin, runWin); }
+    else { runLoss++; runWin = 0; longestLoss = Math.max(longestLoss, runLoss); }
+  });
+  for (let i = closedChron.length - 1; i >= 0; i--) {
+    const isWin = Number(closedChron[i].pnl) > 0;
+    if (curStreakType === null) { curStreakType = isWin ? 'win' : 'loss'; curStreak = 1; }
+    else if ((isWin && curStreakType === 'win') || (!isWin && curStreakType === 'loss')) curStreak++;
+    else break;
+  }
+
+  // Planned Trade Risk Check
+  const pEntryN = parseFloat(plannedEntry), pStopN = parseFloat(plannedStop), pSizeN = parseFloat(plannedSize);
+  const plannedValid = !isNaN(pEntryN) && !isNaN(pStopN) && !isNaN(pSizeN) && pSizeN > 0 && pEntryN !== pStopN;
+  const plannedRisk = plannedValid ? Math.abs(pEntryN - pStopN) * pSizeN : null;
+  const defaultRiskAmount = defaultRiskValue !== null ? (defaultRiskMethod === 'percentage' ? currentEquity * (defaultRiskValue / 100) : defaultRiskValue) : null;
+
+  let plannedStatus = null, plannedReasons = [];
+  if (plannedValid) {
+    if (dailyLimitReached) { plannedStatus = 'LIMIT REACHED'; plannedReasons.push(`Your daily loss limit of ${fmtMoney(effectiveDailyLossLimit).replace('+', '')} has already been reached today (realized loss: ${fmtMoney(-todaysGrossLoss).replace('-', '-')}).`); }
+    else if (tradesLimitReached) { plannedStatus = 'LIMIT REACHED'; plannedReasons.push(`You've recorded ${todaysTrades.length} of your configured ${effectiveMaxTrades} trades today.`); }
+    else if (effectiveMaxRiskPerTrade !== null && plannedRisk > effectiveMaxRiskPerTrade) { plannedStatus = 'WARNING'; plannedReasons.push(`Planned risk (${fmtMoney(plannedRisk).replace('+', '')}) exceeds your configured max risk per trade rule (${fmtMoney(effectiveMaxRiskPerTrade).replace('+', '')}).`); }
+    else if (remainingDailyCapacity !== null && plannedRisk > remainingDailyCapacity) { plannedStatus = 'WARNING'; plannedReasons.push(`Planned risk (${fmtMoney(plannedRisk).replace('+', '')}) exceeds your remaining daily loss capacity (${fmtMoney(remainingDailyCapacity).replace('+', '')}).`); }
+    else if (defaultRiskAmount !== null && plannedRisk > defaultRiskAmount) { plannedStatus = 'CAUTION'; plannedReasons.push(`Planned risk (${fmtMoney(plannedRisk).replace('+', '')}) is higher than your default per-trade risk (${fmtMoney(defaultRiskAmount).replace('+', '')}).`); }
+    else { plannedStatus = 'NORMAL'; plannedReasons.push('Planned risk is within your configured limits.'); }
+  }
+
+  let overallStatus = 'NORMAL';
+  if (dailyLimitReached || tradesLimitReached) overallStatus = 'LIMIT REACHED';
+  else if (remainingDailyCapacity !== null && effectiveDailyLossLimit > 0 && remainingDailyCapacity < effectiveDailyLossLimit * 0.2) overallStatus = 'WARNING';
+  const statusColor = { NORMAL: '#22C55E', CAUTION: '#F59E0B', WARNING: '#EF4444', 'LIMIT REACHED': '#EF4444' };
 
   return (
     <>
@@ -2083,6 +2156,97 @@ function RiskManagementView({ trades, onClose }) {
           <p className="text-[10px] text-[#6B7280] mt-1">Based on the $ risk you logged on each trade vs. your starting balance. A common target is staying under 1-2% per trade.</p>
         </div>
       )}
+
+      {/* ===== RISK STATUS ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-[10px] uppercase tracking-wide text-[#6B7280]">Risk Status Today</p>
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: statusColor[overallStatus], backgroundColor: statusColor[overallStatus] + '22' }}>{overallStatus}</span>
+        </div>
+        {effectiveDailyLossLimit === null && effectiveMaxTrades === null ? (
+          <p className="text-[12px] text-[#6B7280]">No daily loss limit or max trades configured yet — set them in Settings → Risk Preferences, or add rules in the Rule Engine.</p>
+        ) : (
+          <div className="space-y-3">
+            {effectiveDailyLossLimit !== null && (
+              <div>
+                <div className="flex justify-between text-[12px] mb-1.5">
+                  <span className="text-[#9CA3AF]">Daily Loss Limit</span>
+                  <span>{fmtMoney(todaysGrossLoss).replace('+', '')} / {fmtMoney(effectiveDailyLossLimit).replace('+', '')}</span>
+                </div>
+                <div className="h-1.5 rounded-full bg-[#1F1A29] overflow-hidden">
+                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, dailyLossUsedPct)}%`, backgroundColor: dailyLimitReached ? '#EF4444' : dailyLossUsedPct > 80 ? '#F59E0B' : '#6B21A8' }} />
+                </div>
+                <p className="text-[11px] text-[#6B7280] mt-1.5">Remaining capacity: {fmtMoney(remainingDailyCapacity).replace('+', '')}</p>
+              </div>
+            )}
+            {effectiveMaxTrades !== null && (
+              <div className="flex justify-between text-[12px]">
+                <span className="text-[#9CA3AF]">Trades Today</span>
+                <span>{todaysTrades.length} of {effectiveMaxTrades} · {remainingTrades} remaining</span>
+              </div>
+            )}
+          </div>
+        )}
+        <p className="text-[10px] text-[#6B7280] mt-3">Limits come from your Rule Engine rules first, then your Settings defaults if no matching rule is enabled.</p>
+      </div>
+
+      {/* ===== TODAY'S P&L ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Today's Activity</p>
+        {todaysTrades.length === 0 ? (
+          <p className="text-[12px] text-[#6B7280]">No trades recorded today yet.</p>
+        ) : (
+          <div className="space-y-1.5 text-[12px]">
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">Gross Profit</span><span className="text-[#22C55E]">{fmtMoney(todaysGrossProfit)}</span></div>
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">Gross Loss</span><span className="text-[#EF4444]">{fmtMoney(-todaysGrossLoss)}</span></div>
+            <div className="flex justify-between border-t border-white/[0.06] pt-1.5"><span className="text-[#9CA3AF]">Net P&L</span><span style={{ color: todaysNetPnl > 0 ? '#22C55E' : todaysNetPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(todaysNetPnl)}</span></div>
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">Trades</span><span>{todaysTrades.length}</span></div>
+          </div>
+        )}
+      </div>
+
+      {/* ===== STREAKS ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5">
+        <p className="text-[10px] uppercase tracking-wide text-[#6B7280] mb-3">Win / Loss Streaks</p>
+        {closedChron.length === 0 ? (
+          <p className="text-[12px] text-[#6B7280]">Not enough data — no closed trades with a realized outcome yet.</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-3 text-[12px]">
+            <div><p className="text-[#6B7280] text-[10px] mb-0.5">Current</p><p className="font-semibold" style={{ color: curStreakType === 'win' ? '#22C55E' : '#EF4444' }}>{curStreak} {curStreakType === 'win' ? 'Win' : 'Loss'}{curStreak > 1 ? (curStreakType === 'win' ? 's' : 'es') : ''}</p></div>
+            <div><p className="text-[#6B7280] text-[10px] mb-0.5">Longest Win</p><p className="font-semibold">{longestWin}</p></div>
+            <div><p className="text-[#6B7280] text-[10px] mb-0.5">Longest Loss</p><p className="font-semibold">{longestLoss}</p></div>
+          </div>
+        )}
+      </div>
+
+      {/* ===== PLANNED TRADE RISK CHECK ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-3">
+        <p className="text-[10px] uppercase tracking-wide text-[#6B7280]">Planned Trade Risk Check</p>
+        <div className="grid grid-cols-3 gap-2">
+          <Field label="Entry"><input inputMode="decimal" type="number" value={plannedEntry} onChange={e => setPlannedEntry(e.target.value)} className={inputCls} /></Field>
+          <Field label="Stop Loss"><input inputMode="decimal" type="number" value={plannedStop} onChange={e => setPlannedStop(e.target.value)} className={inputCls} /></Field>
+          <Field label="Size"><input inputMode="decimal" type="number" value={plannedSize} onChange={e => setPlannedSize(e.target.value)} className={inputCls} /></Field>
+        </div>
+        {plannedValid ? (
+          <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[12px]">Planned Max Loss at SL</p>
+              <p className="font-semibold text-[13px]">{fmtMoney(plannedRisk).replace('+', '')}</p>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: statusColor[plannedStatus], backgroundColor: statusColor[plannedStatus] + '22' }}>{plannedStatus}</span>
+            </div>
+            {plannedReasons.map((r, i) => <p key={i} className="text-[11px] text-[#9CA3AF] leading-relaxed">{r}</p>)}
+            <p className="text-[10px] text-[#6B7280] pt-1 border-t border-white/[0.06]">This is the planned maximum loss at your stop, not a prediction of the trade's outcome.</p>
+          </div>
+        ) : (
+          <p className="text-[11px] text-[#6B7280]">Enter entry, stop loss, and position size to check this trade against your risk limits.</p>
+        )}
+      </div>
+
+      <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] px-4 py-3">
+        <p className="text-[10px] text-[#6B7280] leading-relaxed">Open trades and unrealized P&L aren't tracked yet — trades are logged once fully closed. This screen reflects realized results only.</p>
+      </div>
     </>
   );
 }
