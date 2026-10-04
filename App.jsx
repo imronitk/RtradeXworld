@@ -136,6 +136,11 @@ function toDb(t) {
     screenshot_url: t.screenshotUrl || null,
     import_fingerprint: t.import_fingerprint || null, import_source: t.import_source || null,
     user_id: CURRENT_USER_ID,
+    timeframe: t.timeframe || null, session: t.session || null, market_condition: t.marketCondition || null,
+    emotion_during: t.emotionDuring || null, emotion_after: t.emotionAfter || null,
+    plan_followed: t.planFollowed || null, risk_followed: t.riskFollowed || null, setup_followed: t.setupFollowed || null,
+    entry_rules_followed: t.entryRulesFollowed || null, exit_rules_followed: t.exitRulesFollowed || null,
+    went_well: t.wentWell || null, went_wrong: t.wentWrong || null, lesson_learned: t.lessonLearned || null, change_next_time: t.changeNextTime || null,
   };
 }
 function fromDb(row) {
@@ -146,6 +151,11 @@ function fromDb(row) {
     emotion: row.emotion, mistake: row.mistake_tags, confidence: row.confidence, notes: row.notes,
     screenshotUrl: row.screenshot_url,
     import_fingerprint: row.import_fingerprint, import_source: row.import_source,
+    timeframe: row.timeframe, session: row.session, marketCondition: row.market_condition,
+    emotionDuring: row.emotion_during, emotionAfter: row.emotion_after,
+    planFollowed: row.plan_followed, riskFollowed: row.risk_followed, setupFollowed: row.setup_followed,
+    entryRulesFollowed: row.entry_rules_followed, exitRulesFollowed: row.exit_rules_followed,
+    wentWell: row.went_well, wentWrong: row.went_wrong, lessonLearned: row.lesson_learned, changeNextTime: row.change_next_time,
   };
 }
 async function uploadScreenshot(file) {
@@ -451,6 +461,9 @@ const NAV_ITEMS = [
 const MARKETS = ['Forex', 'Stocks', 'Crypto', 'Futures', 'Options', 'Other'];
 const EMOTIONS = ['Calm', 'Confident', 'Anxious', 'FOMO', 'Greedy', 'Fearful', 'Revenge', 'Bored'];
 const MISTAKES = ['None', 'Early Entry', 'Late Entry', 'Moved Stop', 'Oversized', 'FOMO Entry', 'Revenge Trade', 'No Stop Loss', 'Ignored Plan'];
+const SESSIONS = ['Asia', 'London', 'New York', 'London/NY Overlap', 'Other'];
+const MARKET_CONDITIONS = ['Trending', 'Ranging', 'Volatile', 'Low Volatility', 'Breakout', 'Choppy', 'News-Sensitive'];
+const YES_PARTIAL_NO = ['Yes', 'Partially', 'No'];
 const inputCls = "w-full bg-[#0C0810] border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-[12px] text-[#E8E9EC] placeholder:text-[#4B5563] focus:outline-none focus:border-[#6B21A8]/50 transition-colors";
 
 function fmtMoney(n) { const sign = n > 0 ? '+' : n < 0 ? '-' : ''; return `${sign}$${Math.abs(n).toFixed(2)}`; }
@@ -536,7 +549,14 @@ function DashboardView({ trades, loading }) {
 
 function TradeForm({ initial, onSave, saveLabel }) {
   const today = new Date().toISOString().slice(0, 10);
-  const base = { date: today, market: 'Forex', symbol: '', direction: 'long', entry: '', exit: '', stopLoss: '', positionSize: '', strategy: '', setup: '', emotion: 'Calm', mistake: 'None', confidence: 3, notes: '', screenshotUrl: null };
+  const base = {
+    date: today, market: 'Forex', symbol: '', direction: 'long', entry: '', exit: '', stopLoss: '', positionSize: '',
+    strategy: '', setup: '', emotion: 'Calm', mistake: 'None', confidence: 3, notes: '', screenshotUrl: null,
+    timeframe: '', session: '', marketCondition: '',
+    emotionDuring: '', emotionAfter: '',
+    planFollowed: '', riskFollowed: '', setupFollowed: '', entryRulesFollowed: '', exitRulesFollowed: '',
+    wentWell: '', wentWrong: '', lessonLearned: '', changeNextTime: '',
+  };
   const [form, setForm] = useState({ ...base, ...initial });
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
@@ -544,6 +564,8 @@ function TradeForm({ initial, onSave, saveLabel }) {
   const [uploadingShot, setUploadingShot] = useState(false);
   const [shotError, setShotError] = useState('');
   const [zoomedImage, setZoomedImage] = useState(false);
+  const [openSections, setOpenSections] = useState({ context: false, psychology: false, discipline: false, review: false });
+  const toggleSection = (key) => setOpenSections(s => ({ ...s, [key]: !s[key] }));
   const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target ? e.target.value : e }));
 
   async function handleFileChange(e) {
@@ -660,6 +682,73 @@ function TradeForm({ initial, onSave, saveLabel }) {
           <button onClick={() => setZoomedImage(false)} className="absolute top-6 right-6 bg-white/10 text-white w-9 h-9 rounded-full flex items-center justify-center text-[14px]">✕</button>
         </div>
       )}
+
+      {/* ===== CONTEXT (optional, collapsible) ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+        <button type="button" onClick={() => toggleSection('context')} className="w-full flex items-center justify-between px-5 py-4 text-left">
+          <p className="text-[12px] font-medium">Context <span className="text-[10px] text-[#6B7280]">(optional)</span></p>
+          <ChevronLeft size={14} className={`text-[#6B7280] transition-transform ${openSections.context ? '-rotate-90' : 'rotate-180'}`} />
+        </button>
+        {openSections.context && (
+          <div className="px-5 pb-5 space-y-4">
+            <Field label="Timeframe"><select value={form.timeframe} onChange={set('timeframe')} className={inputCls}><option value="">Not set</option>{TIMEFRAMES.map(t => <option key={t} value={t}>{t}</option>)}</select></Field>
+            <Field label="Session"><select value={form.session} onChange={set('session')} className={inputCls}><option value="">Not set</option>{SESSIONS.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
+            <Field label="Market Condition"><select value={form.marketCondition} onChange={set('marketCondition')} className={inputCls}><option value="">Not set</option>{MARKET_CONDITIONS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
+          </div>
+        )}
+      </div>
+
+      {/* ===== PSYCHOLOGY: DURING / AFTER (optional, collapsible — "Before" is the existing Emotion field above) ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+        <button type="button" onClick={() => toggleSection('psychology')} className="w-full flex items-center justify-between px-5 py-4 text-left">
+          <p className="text-[12px] font-medium">Psychology — During &amp; After <span className="text-[10px] text-[#6B7280]">(optional)</span></p>
+          <ChevronLeft size={14} className={`text-[#6B7280] transition-transform ${openSections.psychology ? '-rotate-90' : 'rotate-180'}`} />
+        </button>
+        {openSections.psychology && (
+          <div className="px-5 pb-5 space-y-4">
+            <Field label="Emotion During Trade"><select value={form.emotionDuring} onChange={set('emotionDuring')} className={inputCls}><option value="">Not set</option>{EMOTIONS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
+            <Field label="Emotion After Trade"><select value={form.emotionAfter} onChange={set('emotionAfter')} className={inputCls}><option value="">Not set</option>{EMOTIONS.map(e => <option key={e} value={e}>{e}</option>)}</select></Field>
+          </div>
+        )}
+      </div>
+
+      {/* ===== DISCIPLINE CHECK (optional, collapsible) ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+        <button type="button" onClick={() => toggleSection('discipline')} className="w-full flex items-center justify-between px-5 py-4 text-left">
+          <p className="text-[12px] font-medium">Discipline Check <span className="text-[10px] text-[#6B7280]">(optional)</span></p>
+          <ChevronLeft size={14} className={`text-[#6B7280] transition-transform ${openSections.discipline ? '-rotate-90' : 'rotate-180'}`} />
+        </button>
+        {openSections.discipline && (
+          <div className="px-5 pb-5 space-y-4">
+            {[['planFollowed', 'Did I follow my trading plan?'], ['riskFollowed', 'Did I follow my risk rules?'], ['setupFollowed', 'Did I follow my setup?'], ['entryRulesFollowed', 'Did I respect my entry rules?'], ['exitRulesFollowed', 'Did I respect my exit rules?']].map(([key, label]) => (
+              <Field key={key} label={label}>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {YES_PARTIAL_NO.map(opt => (
+                    <button key={opt} type="button" onClick={() => setForm(f => ({ ...f, [key]: opt }))} className={`py-2 rounded-lg text-[11px] font-medium border ${form[key] === opt ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#1F1A29] border-white/[0.08] text-[#9CA3AF]'}`}>{opt}</button>
+                  ))}
+                </div>
+              </Field>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ===== TRADE REVIEW (optional, collapsible) ===== */}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+        <button type="button" onClick={() => toggleSection('review')} className="w-full flex items-center justify-between px-5 py-4 text-left">
+          <p className="text-[12px] font-medium">Trade Review <span className="text-[10px] text-[#6B7280]">(optional)</span></p>
+          <ChevronLeft size={14} className={`text-[#6B7280] transition-transform ${openSections.review ? '-rotate-90' : 'rotate-180'}`} />
+        </button>
+        {openSections.review && (
+          <div className="px-5 pb-5 space-y-4">
+            <Field label="What went well?"><textarea rows={2} value={form.wentWell} onChange={set('wentWell')} className={inputCls} /></Field>
+            <Field label="What went wrong?"><textarea rows={2} value={form.wentWrong} onChange={set('wentWrong')} className={inputCls} /></Field>
+            <Field label="What did I learn?"><textarea rows={2} value={form.lessonLearned} onChange={set('lessonLearned')} className={inputCls} /></Field>
+            <Field label="What will I do differently next time?"><textarea rows={2} value={form.changeNextTime} onChange={set('changeNextTime')} className={inputCls} /></Field>
+          </div>
+        )}
+      </div>
+
       <button onClick={handleSave} disabled={!canSave || saving} className={`w-full py-3.5 rounded-xl font-display text-[12px] font-semibold transition-colors flex items-center justify-center gap-2 ${canSave ? 'bg-[#6B21A8] text-black' : 'bg-[#0C0810] text-[#4B5563] border border-white/[0.06]'}`}>
         {savedMsg ? <><Check size={16} /> Saved to database</> : saving ? 'Saving...' : saveLabel}
       </button>
