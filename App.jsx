@@ -141,6 +141,13 @@ function toDb(t) {
     plan_followed: t.planFollowed || null, risk_followed: t.riskFollowed || null, setup_followed: t.setupFollowed || null,
     entry_rules_followed: t.entryRulesFollowed || null, exit_rules_followed: t.exitRulesFollowed || null,
     went_well: t.wentWell || null, went_wrong: t.wentWrong || null, lesson_learned: t.lessonLearned || null, change_next_time: t.changeNextTime || null,
+    status: t.status || 'closed', take_profit: t.takeProfit === '' ? null : t.takeProfit,
+    trade_thesis: t.tradeThesis || null, invalidation_condition: t.invalidationCondition || null, expected_scenario: t.expectedScenario || null,
+    planned_entry_price: t.plannedEntry === '' ? null : t.plannedEntry, planned_stop_loss: t.plannedStopLoss === '' ? null : t.plannedStopLoss,
+    planned_take_profit: t.plannedTakeProfit === '' ? null : t.plannedTakeProfit, planned_position_size: t.plannedPositionSize === '' ? null : t.plannedPositionSize,
+    planned_risk_amount: t.plannedRisk === '' ? null : t.plannedRisk,
+    planned_at: t.plannedAt || null, executed_at: t.executedAt || null, closed_at: t.closedAt || null, cancelled_at: t.cancelledAt || null,
+    cancellation_reason: t.cancellationReason || null,
   };
 }
 function fromDb(row) {
@@ -156,6 +163,12 @@ function fromDb(row) {
     planFollowed: row.plan_followed, riskFollowed: row.risk_followed, setupFollowed: row.setup_followed,
     entryRulesFollowed: row.entry_rules_followed, exitRulesFollowed: row.exit_rules_followed,
     wentWell: row.went_well, wentWrong: row.went_wrong, lessonLearned: row.lesson_learned, changeNextTime: row.change_next_time,
+    status: row.status || 'closed', takeProfit: row.take_profit,
+    tradeThesis: row.trade_thesis, invalidationCondition: row.invalidation_condition, expectedScenario: row.expected_scenario,
+    plannedEntry: row.planned_entry_price, plannedStopLoss: row.planned_stop_loss, plannedTakeProfit: row.planned_take_profit,
+    plannedPositionSize: row.planned_position_size, plannedRisk: row.planned_risk_amount,
+    plannedAt: row.planned_at, executedAt: row.executed_at, closedAt: row.closed_at, cancelledAt: row.cancelled_at,
+    cancellationReason: row.cancellation_reason,
   };
 }
 async function uploadScreenshot(file) {
@@ -479,7 +492,7 @@ function StatCard({ label, value, positive, negative, icon: Icon, sub, compact, 
   );
 }
 
-function DashboardView({ trades, loading }) {
+function DashboardView({ trades, loading, openCount = 0, plannedCount = 0 }) {
   const now = new Date();
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
@@ -519,6 +532,18 @@ function DashboardView({ trades, loading }) {
           <p className="text-[12px] text-[#6B7280] leading-relaxed">Log a trade on the Trades tab and this screen fills in automatically.</p>
         </div>
       ) : null}
+      {(openCount > 0 || plannedCount > 0) && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-xl bg-[#070509] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
+            <span className="text-[11px] text-[#9CA3AF]">Open Trades</span>
+            <span className="text-[13px] font-semibold text-[#3B82F6]">{openCount}</span>
+          </div>
+          <div className="rounded-xl bg-[#070509] border border-white/[0.06] px-4 py-3 flex items-center justify-between">
+            <span className="text-[11px] text-[#9CA3AF]">Planned Trades</span>
+            <span className="text-[13px] font-semibold text-[#F59E0B]">{plannedCount}</span>
+          </div>
+        </div>
+      )}
       <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
         <p className="text-[10px] uppercase tracking-[0.14em] text-[#6B7280] mb-1">Total P&L</p>
         <p className="font-display text-[22px] font-semibold tracking-tight" style={{ color: totalPnl > 0 ? '#22C55E' : totalPnl < 0 ? '#EF4444' : '#E8E9EC' }}>{fmtMoney(totalPnl)}</p>
@@ -556,15 +581,22 @@ function TradeForm({ initial, onSave, saveLabel }) {
     emotionDuring: '', emotionAfter: '',
     planFollowed: '', riskFollowed: '', setupFollowed: '', entryRulesFollowed: '', exitRulesFollowed: '',
     wentWell: '', wentWrong: '', lessonLearned: '', changeNextTime: '',
+    status: 'closed', takeProfit: '', tradeThesis: '', invalidationCondition: '', expectedScenario: '',
+    plannedEntry: '', plannedStopLoss: '', plannedTakeProfit: '', plannedPositionSize: '', plannedRisk: '',
+    cancellationReason: '',
   };
   const [form, setForm] = useState({ ...base, ...initial });
+  const isNewTrade = !initial?.id;
+  const [mode, setMode] = useState(initial?.status === 'planned' ? 'plan' : 'quick'); // quick | plan — only matters for NEW trades
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
   const [localError, setLocalError] = useState('');
   const [uploadingShot, setUploadingShot] = useState(false);
   const [shotError, setShotError] = useState('');
   const [zoomedImage, setZoomedImage] = useState(false);
-  const [openSections, setOpenSections] = useState({ context: false, psychology: false, discipline: false, review: false });
+  const [closingMode, setClosingMode] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [openSections, setOpenSections] = useState({ context: false, psychology: false, discipline: false, review: false, plan: false });
   const toggleSection = (key) => setOpenSections(s => ({ ...s, [key]: !s[key] }));
   const set = (key) => (e) => setForm(f => ({ ...f, [key]: e.target ? e.target.value : e }));
 
@@ -585,22 +617,36 @@ function TradeForm({ initial, onSave, saveLabel }) {
     }
   }
 
+  const isPlanMode = isNewTrade && mode === 'plan';
   const entryN = parseFloat(form.entry), exitN = parseFloat(form.exit), stopN = parseFloat(form.stopLoss), qtyN = parseFloat(form.positionSize);
-  const hasNumbers = !isNaN(entryN) && !isNaN(exitN) && !isNaN(stopN) && !isNaN(qtyN) && qtyN > 0;
-  let pnl = 0, riskDollar = 0, rMultiple = 0;
-  if (hasNumbers) {
+  const hasPlanNumbers = !isNaN(entryN) && !isNaN(stopN) && !isNaN(qtyN) && qtyN > 0;
+  const hasNumbers = hasPlanNumbers && !isNaN(exitN);
+  let pnl = null, riskDollar = 0, rMultiple = null;
+  if (hasPlanNumbers) {
     const riskPerUnit = Math.abs(entryN - stopN);
     riskDollar = riskPerUnit * qtyN;
-    pnl = form.direction === 'long' ? (exitN - entryN) * qtyN : (entryN - exitN) * qtyN;
-    rMultiple = riskDollar > 0 ? pnl / riskDollar : 0;
   }
-  const canSave = form.symbol.trim() !== '' && form.date && form.direction && hasNumbers;
+  if (hasNumbers) {
+    pnl = form.direction === 'long' ? (exitN - entryN) * qtyN : (entryN - exitN) * qtyN;
+    rMultiple = riskDollar > 0 ? pnl / riskDollar : null; // no valid initial risk -> R unavailable, never an invented value
+  }
+  const needsExit = isNewTrade ? !isPlanMode : (form.status === 'closed' || closingMode);
+  const canSave = form.symbol.trim() !== '' && form.date && form.direction && (needsExit ? hasNumbers : hasPlanNumbers);
 
   async function handleSave() {
     if (!canSave || saving) return;
     setSaving(true);
     setLocalError('');
-    const full = { ...form, entry: entryN, exit: exitN, stopLoss: stopN, positionSize: qtyN, risk: riskDollar, pnl: Number(pnl.toFixed(2)), rMultiple: Number(rMultiple.toFixed(2)) };
+    const nowIso = new Date().toISOString();
+    const resolvedStatus = isPlanMode ? 'planned' : (closingMode ? 'closed' : (form.status || 'closed'));
+    const full = {
+      ...form,
+      entry: entryN, exit: isNaN(exitN) ? null : exitN, stopLoss: stopN, positionSize: qtyN,
+      risk: riskDollar, pnl: pnl === null ? null : Number(pnl.toFixed(2)), rMultiple: rMultiple === null ? null : Number(rMultiple.toFixed(2)),
+      status: resolvedStatus,
+      plannedAt: isPlanMode ? nowIso : form.plannedAt,
+      closedAt: closingMode ? nowIso : form.closedAt,
+    };
     let ok = false;
     try {
       ok = await onSave(full);
@@ -618,8 +664,43 @@ function TradeForm({ initial, onSave, saveLabel }) {
     }
   }
 
+  const statusBadge = { planned: ['Planned', '#F59E0B'], open: ['Open', '#3B82F6'], closed: ['Closed', '#22C55E'], cancelled: ['Cancelled', '#6B7280'] }[form.status || 'closed'];
+
   return (
     <>
+      {isNewTrade ? (
+        <div className="grid grid-cols-2 gap-2">
+          <button onClick={() => setMode('quick')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${mode === 'quick' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#0C0810] border-white/[0.08] text-[#9CA3AF]'}`}>Quick Journal</button>
+          <button onClick={() => setMode('plan')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${mode === 'plan' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#0C0810] border-white/[0.08] text-[#9CA3AF]'}`}>Plan a Trade</button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: statusBadge[1], backgroundColor: statusBadge[1] + '22' }}>{statusBadge[0]}</span>
+            <p className="text-[11px] text-[#6B7280]">{form.status === 'planned' ? 'No exit recorded yet — this is a plan, not a completed trade.' : form.status === 'open' ? 'Trade is open — close it below once you have an exit.' : form.status === 'cancelled' ? 'This plan was cancelled.' : ''}</p>
+          </div>
+          {form.status === 'planned' && !cancelling && (
+            <div className="flex gap-2">
+              <button onClick={() => setForm(f => ({ ...f, status: 'open', executedAt: new Date().toISOString() }))} className="flex-1 py-2.5 rounded-xl text-[12px] font-medium bg-[#3B82F6]/15 border border-[#3B82F6]/40 text-[#3B82F6]">Mark as Open</button>
+              <button onClick={() => setClosingMode(true)} className="flex-1 py-2.5 rounded-xl text-[12px] font-medium bg-[#22C55E]/15 border border-[#22C55E]/40 text-[#22C55E]">Close Trade</button>
+              <button onClick={() => setCancelling(true)} className="flex-1 py-2.5 rounded-xl text-[12px] font-medium bg-[#EF4444]/10 border border-[#EF4444]/30 text-[#EF4444]">Cancel Plan</button>
+            </div>
+          )}
+          {form.status === 'open' && !closingMode && (
+            <button onClick={() => setClosingMode(true)} className="w-full py-2.5 rounded-xl text-[12px] font-medium bg-[#22C55E]/15 border border-[#22C55E]/40 text-[#22C55E]">Close Trade</button>
+          )}
+          {cancelling && (
+            <div className="rounded-xl bg-[#0C0810] border border-[#EF4444]/30 p-4 space-y-3">
+              <Field label="Cancellation Reason (optional)"><input type="text" placeholder="e.g. Setup invalidated" value={form.cancellationReason} onChange={set('cancellationReason')} className={inputCls} /></Field>
+              <div className="flex gap-2">
+                <button onClick={() => setCancelling(false)} className="flex-1 py-2.5 rounded-xl text-[12px] bg-[#1F1A29] text-[#9CA3AF]">Back</button>
+                <button onClick={() => { setForm(f => ({ ...f, status: 'cancelled', cancelledAt: new Date().toISOString() })); setCancelling(false); }} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold bg-[#EF4444] text-white">Confirm Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Date"><input type="date" value={form.date} onChange={set('date')} className={inputCls} /></Field>
@@ -637,15 +718,16 @@ function TradeForm({ initial, onSave, saveLabel }) {
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.entry} onChange={set('entry')} className={inputCls} /></Field>
-          <Field label="Exit Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.exit} onChange={set('exit')} className={inputCls} /></Field>
+          {(isNewTrade ? !isPlanMode : (form.status === 'closed' || closingMode)) && <Field label="Exit Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.exit} onChange={set('exit')} className={inputCls} /></Field>}
           <Field label="Stop Loss"><input inputMode="decimal" type="number" placeholder="0.00" value={form.stopLoss} onChange={set('stopLoss')} className={inputCls} /></Field>
           <Field label="Position Size"><input inputMode="decimal" type="number" placeholder="0" value={form.positionSize} onChange={set('positionSize')} className={inputCls} /></Field>
+          {(isPlanMode || form.status === 'planned' || form.status === 'open') && <Field label="Take Profit (optional)"><input inputMode="decimal" type="number" placeholder="0.00" value={form.takeProfit} onChange={set('takeProfit')} className={inputCls} /></Field>}
         </div>
         {hasNumbers && (
           <div className="grid grid-cols-3 gap-2 pt-1">
             <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">Risk</p><p className="text-[12px] font-semibold">${riskDollar.toFixed(2)}</p></div>
             <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">P&L</p><p className="text-[12px] font-semibold" style={{ color: pnl > 0 ? '#22C55E' : pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{pnl > 0 ? '+' : ''}{pnl.toFixed(2)}</p></div>
-            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">R Multiple</p><p className="text-[12px] font-semibold" style={{ color: rMultiple > 0 ? '#22C55E' : rMultiple < 0 ? '#EF4444' : '#E8E9EC' }}>{rMultiple.toFixed(2)}R</p></div>
+            <div className="rounded-xl bg-[#0C0810] border border-white/[0.06] p-3 text-center"><p className="text-[8.5px] text-[#6B7280] mb-1">R Multiple</p><p className="text-[12px] font-semibold" style={{ color: rMultiple > 0 ? '#22C55E' : rMultiple < 0 ? '#EF4444' : '#E8E9EC' }}>{rMultiple === null ? 'R unavailable' : `${rMultiple.toFixed(2)}R`}</p></div>
           </div>
         )}
       </div>
@@ -680,6 +762,22 @@ function TradeForm({ initial, onSave, saveLabel }) {
         <div onClick={() => setZoomedImage(false)} className="fixed inset-0 bg-black/95 z-50 flex items-center justify-center p-4" style={{ position: 'fixed' }}>
           <img src={form.screenshotUrl} alt="Trade screenshot full size" className="max-w-full max-h-full object-contain rounded-lg" />
           <button onClick={() => setZoomedImage(false)} className="absolute top-6 right-6 bg-white/10 text-white w-9 h-9 rounded-full flex items-center justify-center text-[14px]">✕</button>
+        </div>
+      )}
+
+      {(isPlanMode || form.status === 'planned' || form.status === 'open') && (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+          <button type="button" onClick={() => toggleSection('plan')} className="w-full flex items-center justify-between px-5 py-4 text-left">
+            <p className="text-[12px] font-medium">Trade Plan <span className="text-[10px] text-[#6B7280]">(optional)</span></p>
+            <ChevronLeft size={14} className={`text-[#6B7280] transition-transform ${openSections.plan ? '-rotate-90' : 'rotate-180'}`} />
+          </button>
+          {openSections.plan && (
+            <div className="px-5 pb-5 space-y-4">
+              <Field label="Trade Thesis"><textarea rows={2} placeholder="Why is this trade valid?" value={form.tradeThesis} onChange={set('tradeThesis')} className={inputCls} /></Field>
+              <Field label="Invalidation Condition"><textarea rows={2} placeholder="What would prove this idea wrong?" value={form.invalidationCondition} onChange={set('invalidationCondition')} className={inputCls} /></Field>
+              <Field label="Expected Scenario"><textarea rows={2} placeholder="What do you expect to happen?" value={form.expectedScenario} onChange={set('expectedScenario')} className={inputCls} /></Field>
+            </div>
+          )}
         </div>
       )}
 
@@ -753,19 +851,23 @@ function TradeForm({ initial, onSave, saveLabel }) {
         {savedMsg ? <><Check size={16} /> Saved to database</> : saving ? 'Saving...' : saveLabel}
       </button>
       {localError && <p className="text-[12px] text-[#EF4444] text-center -mt-2 flex items-center justify-center gap-1"><AlertCircle size={13} />{localError}</p>}
-      {!canSave && <p className="text-[10px] text-[#6B7280] text-center -mt-2">Fill in Symbol, Entry, Exit, Stop Loss, and Position Size to save.</p>}
+      {!canSave && <p className="text-[10px] text-[#6B7280] text-center -mt-2">{!needsExit ? 'Fill in Symbol, Entry, Stop Loss, and Position Size to save.' : 'Fill in Symbol, Entry, Exit, Stop Loss, and Position Size to save.'}</p>}
     </>
   );
 }
 
 const FILTERS = ['All', 'Long', 'Short', 'Wins', 'Losses'];
+const STATUS_FILTERS = ['All', 'Planned', 'Open', 'Closed', 'Cancelled'];
+const STATUS_BADGES = { planned: ['Planned', '#F59E0B'], open: ['Open', '#3B82F6'], cancelled: ['Cancelled', '#6B7280'] };
 const SORTS = ['Newest', 'Oldest', 'Highest P&L', 'Lowest P&L'];
 
 function LedgerView({ trades, onEdit }) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
   const [sort, setSort] = useState('Newest');
   let list = trades.filter(t => {
+    if (statusFilter !== 'All' && (t.status || 'closed') !== statusFilter.toLowerCase()) return false;
     const q = query.toLowerCase();
     const matchesQuery = !q || [t.symbol, t.strategy, t.setup, t.notes].some(v => (v || '').toLowerCase().includes(q));
     const matchesFilter = filter === 'All' ? true : filter === 'Long' ? t.direction === 'long' : filter === 'Short' ? t.direction === 'short' : filter === 'Wins' ? Number(t.pnl) > 0 : Number(t.pnl) < 0;
@@ -786,6 +888,9 @@ function LedgerView({ trades, onEdit }) {
       <div className="flex gap-2 overflow-x-auto pb-1 -mx-0.5 px-0.5">
         {FILTERS.map(f => (<button key={f} onClick={() => setFilter(f)} className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${filter === f ? 'bg-[#6B21A8]/15 border-[#6B21A8]/50 text-[#6B21A8]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>{f}</button>))}
       </div>
+      <div className="flex gap-2 overflow-x-auto pb-1 -mx-0.5 px-0.5">
+        {STATUS_FILTERS.map(f => (<button key={f} onClick={() => setStatusFilter(f)} className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-medium border transition-colors ${statusFilter === f ? 'bg-[#6B21A8]/15 border-[#6B21A8]/50 text-[#B58BE0]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>{f === 'All' ? 'Any Status' : f}</button>))}
+      </div>
       <select value={sort} onChange={e => setSort(e.target.value)} className={inputCls}>{SORTS.map(s => <option key={s} value={s}>{s}</option>)}</select>
       {list.length === 0 ? (
         <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center"><p className="text-[12px] text-[#6B7280]">No trades match.</p></div>
@@ -794,7 +899,11 @@ function LedgerView({ trades, onEdit }) {
           {list.map(t => (
             <button key={t.id} onClick={() => onEdit(t)} className="w-full text-left rounded-xl bg-[#070509] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#0C0810] transition-colors">
               <div><p className="font-display text-[12px] font-semibold flex items-center gap-1.5">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'} · {t.market}</span>{t.screenshotUrl && <Camera size={12} className="text-[#6B7280] shrink-0" />}</p><p className="text-[10px] text-[#6B7280]">{t.date}</p></div>
-              <div className="text-right"><p className="text-[12px] font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p><p className="text-[10px] text-[#6B7280]">{Number(t.rMultiple).toFixed(2)}R</p></div>
+              {(t.status || 'closed') === 'closed' ? (
+                <div className="text-right"><p className="text-[12px] font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p><p className="text-[10px] text-[#6B7280]">{t.rMultiple === null || t.rMultiple === undefined ? 'R unavailable' : `${Number(t.rMultiple).toFixed(2)}R`}</p></div>
+              ) : (
+                <div className="text-right"><span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: STATUS_BADGES[t.status][1], backgroundColor: STATUS_BADGES[t.status][1] + '22' }}>{STATUS_BADGES[t.status][0]}</span><p className="text-[10px] text-[#6B7280] mt-1">{t.status === 'cancelled' ? 'Not a trade' : 'Not closed'}</p></div>
+              )}
             </button>
           ))}
         </div>
@@ -3750,9 +3859,9 @@ function AppShell({ user, onLogout }) {
         ) : showCsvImport ? (
           <CsvImportView trades={trades} onClose={() => setShowCsvImport(false)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
         ) : moreDetailView === 'risk' ? (
-          <RiskManagementView trades={trades} onClose={() => setMoreDetailView(null)} />
+          <RiskManagementView trades={trades.filter(t => (t.status || 'closed') === 'closed')} onClose={() => setMoreDetailView(null)} />
         ) : moreDetailView === 'mentor' ? (
-          <AIMentorView trades={trades} onClose={() => setMoreDetailView(null)} />
+          <AIMentorView trades={trades.filter(t => (t.status || 'closed') === 'closed')} onClose={() => setMoreDetailView(null)} />
         ) : moreDetailView === 'csv' ? (
           <CsvImportView trades={trades} onClose={() => setMoreDetailView(null)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
         ) : moreDetailView === 'calc' ? (
@@ -3762,10 +3871,10 @@ function AppShell({ user, onLogout }) {
           </>
         ) : (
         <>
-        {active === 'dashboard' && <DashboardView trades={trades} loading={loading} />}
+        {active === 'dashboard' && <DashboardView trades={trades.filter(t => (t.status || 'closed') === 'closed')} openCount={trades.filter(t => t.status === 'open').length} plannedCount={trades.filter(t => t.status === 'planned').length} loading={loading} />}
         {active === 'trades' && <TradesTab trades={trades} onAdd={handleAdd} onUpdate={handleUpdate} onDelete={handleDelete} dbError={dbError} />}
-        {active === 'calendar' && <CalendarView trades={trades} />}
-        {active === 'stats' && <StatsView trades={trades} />}
+        {active === 'calendar' && <CalendarView trades={trades.filter(t => (t.status || 'closed') === 'closed')} />}
+        {active === 'stats' && <StatsView trades={trades.filter(t => (t.status || 'closed') === 'closed')} />}
         {active === 'journal' && <JournalView />}
         {active === 'more' && <MoreView onOpenTool={setMoreDetailView} />}
         </>
