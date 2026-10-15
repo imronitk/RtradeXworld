@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck, Sparkles, Menu, Upload } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
 import Papa from 'papaparse';
@@ -1562,48 +1562,239 @@ function EdgeLeakView({ trades }) {
   );
 }
 
-const MENTOR_SYSTEM_PROMPT = `You are RTrade AI Mentor, a professional trading performance mentor.
-Your purpose is to help the trader understand their own decisions, behavior, risk management, execution and statistical edge.
-You are not a signal seller. You do not predict the future. You do not guarantee profits.
-You do not encourage revenge trading, martingale behavior, or increasing risk to recover losses.
-You challenge weak reasoning respectfully. You distinguish trade outcome from decision quality.
-You use the trader's actual journal evidence provided below whenever available, and never invent statistics or claim data you weren't given.
-When evidence is insufficient, say so plainly.
-You act like a calm, experienced trading mentor: identify the most important issue first, explain why it matters, and give one practical next step.
-Ask a smart follow-up question when it would help more than a big answer. Keep responses concise and conversational, not a wall of text.`;
 
-const MENTOR_TOPICS = ['General', 'Psychology', 'Risk', 'Strategy'];
+// ===== COACH CONTEXT (pure) START =====
+const COACH_TOPICS = [
+  'General Trading Education', 'Risk Management', 'Trading Psychology', 'Strategy Review', 'Trade Review',
+  'Execution Quality', 'Discipline & Rule Following', 'Losing Streak Analysis', 'Winning Trade Analysis',
+  'Planned vs Actual Execution', 'Trading Consistency', 'Journal Insights',
+];
+const COACH_SCOPES = ['All closed trades', 'Last 10 closed trades', 'Last 30 days', 'Last 90 days'];
+const COACH_STARTERS = [
+  'Review my last five closed trades.',
+  'Help me analyze my FOMO-tagged trades.',
+  'Compare my planned risk with actual risk.',
+  'Explain my current drawdown.',
+  'Help me create a trade-review checklist.',
+  'Compare my strategies using my journal data.',
+];
 
-function buildStatsContext(trades, topic) {
-  if (trades.length === 0) return 'TRADING_STATISTICS:\nNo trades logged yet.';
-  const pnl = trades.reduce((a, t) => a + Number(t.pnl), 0);
-  const wins = trades.filter(t => Number(t.pnl) > 0).length;
-  const winRate = (wins / trades.length) * 100;
-  const avgR = trades.reduce((a, t) => a + (Number(t.rMultiple) || 0), 0) / trades.length;
-  let lines = [`TRADING_STATISTICS:`, `Total trades: ${trades.length}`, `Net P&L: ${fmtMoney(pnl)}`, `Win rate: ${winRate.toFixed(0)}%`, `Average R: ${avgR.toFixed(2)}R`];
+function coachNum(x) { const n = Number(x); return Number.isFinite(n) ? n : 0; }
+function coachMoney(x) { const n = coachNum(x); return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(n).toFixed(2); }
+function coachValidR(t) { return t.rMultiple !== null && t.rMultiple !== undefined && t.rMultiple !== '' && Number.isFinite(Number(t.rMultiple)); }
+function coachTrunc(s, n) { s = String(s || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) + '…' : s; }
 
-  if (topic === 'Psychology') {
-    const emo = {};
-    trades.forEach(t => { if (!t.emotion) return; (emo[t.emotion] = emo[t.emotion] || { c: 0, p: 0 }).c++; emo[t.emotion].p += Number(t.pnl); });
-    lines.push('PSYCHOLOGY:');
-    Object.entries(emo).forEach(([k, v]) => lines.push(`${k}: ${v.c} trades, ${fmtMoney(v.p)} net`));
-    const mistakes = trades.filter(t => t.mistake && t.mistake !== 'None');
-    lines.push(`Trades with a flagged mistake: ${mistakes.length} of ${trades.length}`);
-  } else if (topic === 'Risk') {
-    const risks = trades.filter(t => t.risk).map(t => Number(t.risk));
-    if (risks.length) lines.push(`RISK:`, `Average risk per trade: ${(risks.reduce((a, b) => a + b, 0) / risks.length).toFixed(2)}`);
-    const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
-    let peak = -Infinity, running = 0, maxDD = 0;
-    chronological.forEach(t => { running += Number(t.pnl); peak = Math.max(peak, running); maxDD = Math.max(maxDD, peak - running); });
-    lines.push(`Max drawdown: ${fmtMoney(-maxDD)}`);
-  } else if (topic === 'Strategy') {
-    const strat = {};
-    trades.forEach(t => { const k = t.strategy || 'Unspecified'; (strat[k] = strat[k] || { c: 0, p: 0, r: 0 }).c++; strat[k].p += Number(t.pnl); strat[k].r += Number(t.rMultiple) || 0; });
-    lines.push('STRATEGY_PERFORMANCE:');
-    Object.entries(strat).forEach(([k, v]) => lines.push(`${k}: ${v.c} trades, ${fmtMoney(v.p)} net, avg ${(v.r / v.c).toFixed(2)}R`));
-  }
-  return lines.join('\n');
+function coachNewestFirst(list) {
+  return [...list].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) || coachNum(b.id) - coachNum(a.id));
 }
+
+function applyCoachScope(closed, scope, now = new Date()) {
+  const sorted = coachNewestFirst(closed);
+  if (scope === 'Last 10 closed trades') return sorted.slice(0, 10);
+  const days = scope === 'Last 30 days' ? 30 : scope === 'Last 90 days' ? 90 : null;
+  if (days) {
+    const cutoff = new Date(now.getTime()); cutoff.setDate(cutoff.getDate() - days);
+    const cs = cutoff.toISOString().slice(0, 10);
+    return sorted.filter(t => t.date >= cs);
+  }
+  return sorted;
+}
+
+function coachCoreStats(list) {
+  const n = list.length;
+  const wins = list.filter(t => coachNum(t.pnl) > 0).length;
+  const losses = list.filter(t => coachNum(t.pnl) < 0).length;
+  const be = n - wins - losses;
+  const net = list.reduce((a, t) => a + coachNum(t.pnl), 0);
+  const gp = list.filter(t => coachNum(t.pnl) > 0).reduce((a, t) => a + coachNum(t.pnl), 0);
+  const gl = Math.abs(list.filter(t => coachNum(t.pnl) < 0).reduce((a, t) => a + coachNum(t.pnl), 0));
+  const rList = list.filter(coachValidR);
+  const avgR = rList.length ? rList.reduce((a, t) => a + Number(t.rMultiple), 0) / rList.length : null;
+  return { n, wins, losses, be, net, avgR, rCount: rList.length, profitFactor: gl > 0 ? gp / gl : null, winRate: n ? (wins / n) * 100 : 0 };
+}
+
+function coachStreaks(list) {
+  const chron = [...list].filter(t => coachNum(t.pnl) !== 0).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0) || coachNum(a.id) - coachNum(b.id));
+  let lw = 0, ll = 0, rw = 0, rl = 0;
+  chron.forEach(t => { if (coachNum(t.pnl) > 0) { rw++; rl = 0; lw = Math.max(lw, rw); } else { rl++; rw = 0; ll = Math.max(ll, rl); } });
+  let cur = 0, type = null;
+  for (let i = chron.length - 1; i >= 0; i--) {
+    const w = coachNum(chron[i].pnl) > 0;
+    if (type === null) { type = w ? 'win' : 'loss'; cur = 1; }
+    else if ((w && type === 'win') || (!w && type === 'loss')) cur++;
+    else break;
+  }
+  return { cur, type, longestWin: lw, longestLoss: ll };
+}
+
+function coachTally(list, getKey, maxItems = 8) {
+  const m = {};
+  list.forEach(t => {
+    const k = getKey(t); if (!k) return;
+    const e = (m[k] = m[k] || { n: 0, wins: 0, net: 0 });
+    e.n++; if (coachNum(t.pnl) > 0) e.wins++; e.net += coachNum(t.pnl);
+  });
+  return Object.entries(m).sort((a, b) => b[1].n - a[1].n).slice(0, maxItems)
+    .map(([k, v]) => `${k}: ${v.n} trades, ${v.wins} wins, net ${coachMoney(v.net)}`);
+}
+
+function coachTradeLine(t) {
+  const r = coachValidR(t) ? `${Number(t.rMultiple).toFixed(2)}R` : 'R unavailable';
+  const bits = [`${t.date}`, `${t.symbol || '?'}`, t.direction || '', `P&L ${coachMoney(t.pnl)}`, r];
+  if (t.strategy) bits.push(`strategy: ${coachTrunc(t.strategy, 30)}`);
+  if (t.setup) bits.push(`setup: ${coachTrunc(t.setup, 30)}`);
+  if (coachNum(t.risk) > 0) bits.push(`risk ${coachNum(t.risk).toFixed(2)}`);
+  if (t.emotion) bits.push(`emotion-before: ${t.emotion}`);
+  if (t.emotionDuring) bits.push(`during: ${t.emotionDuring}`);
+  if (t.emotionAfter) bits.push(`after: ${t.emotionAfter}`);
+  if (t.mistake && t.mistake !== 'None') bits.push(`mistake: ${t.mistake}`);
+  if (t.planFollowed) bits.push(`plan followed: ${t.planFollowed}`);
+  if (t.riskFollowed) bits.push(`risk followed: ${t.riskFollowed}`);
+  if (t.setupFollowed) bits.push(`setup followed: ${t.setupFollowed}`);
+  if (t.wentWell) bits.push(`went well: "${coachTrunc(t.wentWell, 120)}"`);
+  if (t.wentWrong) bits.push(`went wrong: "${coachTrunc(t.wentWrong, 120)}"`);
+  if (t.lessonLearned) bits.push(`lesson: "${coachTrunc(t.lessonLearned, 120)}"`);
+  return '- ' + bits.join(' | ');
+}
+
+function coachDisciplineBlock(list) {
+  const out = [];
+  [['planFollowed', 'Plan followed'], ['riskFollowed', 'Risk rules followed'], ['setupFollowed', 'Setup followed'],
+   ['entryRulesFollowed', 'Entry rules respected'], ['exitRulesFollowed', 'Exit rules respected']].forEach(([k, label]) => {
+    const answered = list.filter(t => t[k]);
+    if (!answered.length) { out.push(`${label}: no answers recorded`); return; }
+    const c = { Yes: 0, Partially: 0, No: 0 };
+    answered.forEach(t => { if (c[t[k]] !== undefined) c[t[k]]++; });
+    out.push(`${label} (${answered.length} answered): Yes ${c.Yes}, Partially ${c.Partially}, No ${c.No}`);
+  });
+  const yes = list.filter(t => t.planFollowed === 'Yes'), no = list.filter(t => t.planFollowed === 'No');
+  if (yes.length) out.push(`Plan followed = Yes: ${yes.length} trades, net ${coachMoney(yes.reduce((a, t) => a + coachNum(t.pnl), 0))}`);
+  if (no.length) out.push(`Plan followed = No: ${no.length} trades, net ${coachMoney(no.reduce((a, t) => a + coachNum(t.pnl), 0))}`);
+  return out;
+}
+
+function buildCoachContext({ trades, topic, scope, strategy, riskPrefs, now = new Date() }) {
+  const all = trades || [];
+  const closedAll = all.filter(t => (t.status || 'closed') === 'closed');
+  const counts = {
+    closed: closedAll.length,
+    planned: all.filter(t => t.status === 'planned').length,
+    open: all.filter(t => t.status === 'open').length,
+    cancelled: all.filter(t => t.status === 'cancelled').length,
+  };
+  let list = applyCoachScope(closedAll, scope || 'All closed trades', now);
+  const strat = strategy && strategy !== 'All strategies' ? strategy : null;
+  if (strat) list = list.filter(t => (t.strategy || 'Unspecified') === strat);
+
+  const L = [];
+  L.push(`SCOPE: ${scope || 'All closed trades'}${strat ? `, strategy "${strat}"` : ''}`);
+  L.push(`JOURNAL LIFECYCLE COUNTS: closed ${counts.closed}, planned ${counts.planned}, open ${counts.open}, cancelled ${counts.cancelled}. Only closed trades count as realized wins/losses.`);
+  L.push(`CLOSED TRADES IN SCOPE (sample size): ${list.length}`);
+  if (list.length === 0) {
+    L.push('No closed trades in this scope, so no realized-performance statistics are available.');
+  } else {
+    const s = coachCoreStats(list);
+    L.push(`Wins ${s.wins}, losses ${s.losses}, break-even ${s.be}; win rate ${s.winRate.toFixed(0)}%; net P&L ${coachMoney(s.net)}.`);
+    L.push(`Average R: ${s.avgR !== null ? s.avgR.toFixed(2) + `R (from ${s.rCount} of ${s.n} trades with valid initial risk)` : 'unavailable (no trades with valid initial risk)'}. Profit factor: ${s.profitFactor !== null ? s.profitFactor.toFixed(2) : 'not computable (no losing trades)'}.`);
+    if (s.n < 10) L.push('NOTE: fewer than 10 trades in scope, so treat any pattern as tentative.');
+  }
+
+  if (list.length > 0) {
+    const chron = [...list].reverse();
+    if (topic === 'Risk Management') {
+      const rp = riskPrefs || {};
+      L.push('CONFIGURED RISK PREFERENCES: ' + [
+        `risk per trade ${rp.default_risk_value != null ? `${rp.default_risk_value}${rp.default_risk_method === 'fixed' ? ' (fixed amount)' : '%'}` : 'not configured'}`,
+        `daily loss limit ${rp.daily_loss_limit != null ? rp.daily_loss_limit : 'not configured'}`,
+        `max trades/day ${rp.max_trades_per_day != null ? rp.max_trades_per_day : 'not configured'}`,
+        `default R:R ${rp.default_rr || 'not configured'}`,
+      ].join('; '));
+      const risks = list.filter(t => coachNum(t.risk) > 0).map(t => coachNum(t.risk));
+      if (risks.length) L.push(`Recorded risk amounts (${risks.length} trades): average ${(risks.reduce((a, b) => a + b, 0) / risks.length).toFixed(2)}, max ${Math.max(...risks).toFixed(2)}.`);
+      let run = 0, peak = 0, maxDD = 0;
+      chron.forEach(t => { run += coachNum(t.pnl); peak = Math.max(peak, run); maxDD = Math.max(maxDD, peak - run); });
+      L.push(`Max drawdown of cumulative P&L within this scope: ${maxDD.toFixed(2)} (relative to the scope's own peak, not account equity).`);
+      const byDay = {};
+      list.forEach(t => { if (coachNum(t.pnl) < 0) byDay[t.date] = (byDay[t.date] || 0) + Math.abs(coachNum(t.pnl)); });
+      const worst = Object.entries(byDay).sort((a, b) => b[1] - a[1])[0];
+      if (worst) L.push(`Largest single-day realized loss: ${worst[1].toFixed(2)} on ${worst[0]}.`);
+      if (rp.daily_loss_limit != null) {
+        const over = Object.values(byDay).filter(v => v > Number(rp.daily_loss_limit)).length;
+        L.push(`Days where realized losses exceeded the configured daily loss limit: ${over}.`);
+      }
+    } else if (topic === 'Trading Psychology') {
+      const before = coachTally(list, t => t.emotion), during = coachTally(list, t => t.emotionDuring), after = coachTally(list, t => t.emotionAfter);
+      L.push('EMOTION BEFORE TRADE (self-reported):', ...(before.length ? before : ['none recorded']));
+      L.push('EMOTION DURING TRADE:', ...(during.length ? during : ['none recorded']));
+      L.push('EMOTION AFTER TRADE:', ...(after.length ? after : ['none recorded']));
+      const mis = coachTally(list.filter(t => t.mistake && t.mistake !== 'None'), t => t.mistake);
+      L.push('SELF-CLASSIFIED MISTAKES:', ...(mis.length ? mis : ['none recorded']));
+    } else if (topic === 'Strategy Review') {
+      const strategies = {};
+      list.forEach(t => { const k = coachTrunc(t.strategy || 'Unspecified', 30); (strategies[k] = strategies[k] || []).push(t); });
+      L.push('PER STRATEGY (closed trades):');
+      Object.entries(strategies).sort((a, b) => b[1].length - a[1].length).slice(0, 8).forEach(([k, arr]) => {
+        const st = coachCoreStats(arr);
+        L.push(`${k}: ${st.n} trades${st.n < 10 ? ' (small sample)' : ''}, ${st.wins}W/${st.losses}L, net ${coachMoney(st.net)}, avg R ${st.avgR !== null ? st.avgR.toFixed(2) + ` (${st.rCount} valid)` : 'unavailable'}`);
+      });
+      const setups = coachTally(list.filter(t => t.setup), t => coachTrunc(t.setup, 30));
+      if (setups.length) L.push('PER SETUP:', ...setups);
+    } else if (topic === 'Trade Review') {
+      L.push('MOST RECENT CLOSED TRADES (newest first, up to 5):', ...list.slice(0, 5).map(coachTradeLine));
+    } else if (topic === 'Execution Quality') {
+      L.push('DISCIPLINE ANSWERS:', ...coachDisciplineBlock(list));
+      const mis = coachTally(list.filter(t => t.mistake && t.mistake !== 'None'), t => t.mistake);
+      L.push('SELF-CLASSIFIED MISTAKES:', ...(mis.length ? mis : ['none recorded']));
+    } else if (topic === 'Discipline & Rule Following') {
+      L.push('DISCIPLINE ANSWERS:', ...coachDisciplineBlock(list));
+      const rp = riskPrefs || {};
+      const perDay = {};
+      list.forEach(t => { perDay[t.date] = (perDay[t.date] || 0) + 1; });
+      if (rp.max_trades_per_day != null) L.push(`Days with more trades than the configured max (${rp.max_trades_per_day}/day): ${Object.values(perDay).filter(c => c > Number(rp.max_trades_per_day)).length} of ${Object.keys(perDay).length} trading days.`);
+      else L.push('Max trades/day is not configured.');
+    } else if (topic === 'Losing Streak Analysis') {
+      const st = coachStreaks(list);
+      L.push(`STREAKS: current ${st.cur} ${st.type || 'n/a'}${st.cur === 1 ? '' : st.type ? (st.type === 'loss' ? 'es' : 's') : ''}; longest win streak ${st.longestWin}; longest losing streak ${st.longestLoss}.`);
+      const losers = list.filter(t => coachNum(t.pnl) < 0);
+      L.push('MOST RECENT LOSING TRADES (up to 5):', ...(losers.slice(0, 5).map(coachTradeLine)));
+      const emo = coachTally(losers, t => t.emotion), mis = coachTally(losers.filter(t => t.mistake && t.mistake !== 'None'), t => t.mistake);
+      L.push(`Among ${losers.length} losing trades — emotion-before:`, ...(emo.length ? emo : ['none recorded']), 'mistakes:', ...(mis.length ? mis : ['none recorded']));
+    } else if (topic === 'Winning Trade Analysis') {
+      const winners = list.filter(t => coachNum(t.pnl) > 0);
+      L.push('LARGEST WINNING TRADES (up to 5):', ...winners.sort((a, b) => coachNum(b.pnl) - coachNum(a.pnl)).slice(0, 5).map(coachTradeLine));
+      L.push(`Among ${winners.length} winning trades — discipline answers:`, ...coachDisciplineBlock(winners));
+    } else if (topic === 'Planned vs Actual Execution') {
+      const withPlan = list.filter(t => t.plannedEntry !== null && t.plannedEntry !== undefined && t.plannedEntry !== '');
+      L.push(`Closed trades in scope with recorded planned-vs-actual values: ${withPlan.length} of ${list.length}.`);
+      if (withPlan.length === 0) L.push('No planned-vs-actual values have been recorded yet, so execution slippage versus plan cannot be analysed.');
+      else withPlan.slice(0, 5).forEach(t => L.push(`- ${t.date} ${t.symbol}: planned entry ${t.plannedEntry}, actual entry ${t.entry}; planned stop ${t.plannedStopLoss ?? 'n/a'}, actual stop ${t.stopLoss}; planned size ${t.plannedPositionSize ?? 'n/a'}, actual size ${t.positionSize}`));
+      const cancelled = coachNewestFirst(all.filter(t => t.status === 'cancelled')).slice(0, 5);
+      if (cancelled.length) L.push('RECENT CANCELLED PLANS (not trades):', ...cancelled.map(t => `- ${t.date} ${t.symbol}: ${coachTrunc(t.cancellationReason, 80) || 'no reason recorded'}`));
+    } else if (topic === 'Trading Consistency') {
+      const byWeek = {};
+      list.forEach(t => {
+        const d = new Date(t.date + 'T00:00:00Z'); const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day);
+        const k = d.toISOString().slice(0, 10); const e = (byWeek[k] = byWeek[k] || { n: 0, net: 0 }); e.n++; e.net += coachNum(t.pnl);
+      });
+      L.push('TRADES PER WEEK (week starting Monday, newest first):', ...Object.entries(byWeek).sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 6).map(([k, v]) => `${k}: ${v.n} trades, net ${coachMoney(v.net)}`));
+      L.push(`Distinct trading days in scope: ${new Set(list.map(t => t.date)).size}.`);
+    } else if (topic === 'Journal Insights') {
+      const n = list.length;
+      const c = (f) => list.filter(f).length;
+      L.push('JOURNAL COMPLETENESS (closed trades in scope):',
+        `strategy set: ${c(t => t.strategy)} of ${n}`, `setup set: ${c(t => t.setup)} of ${n}`,
+        `timeframe/session/market condition set: ${c(t => t.timeframe || t.session || t.marketCondition)} of ${n}`,
+        `emotion-after recorded: ${c(t => t.emotionAfter)} of ${n}`,
+        `discipline answered: ${c(t => t.planFollowed || t.riskFollowed || t.setupFollowed)} of ${n}`,
+        `written review (any field): ${c(t => t.wentWell || t.wentWrong || t.lessonLearned || t.changeNextTime)} of ${n}`,
+        `screenshot attached: ${c(t => t.screenshotUrl)} of ${n}`);
+    }
+  }
+  let text = L.join('\n');
+  if (text.length > 6500) text = text.slice(0, 6500) + '\n[context truncated to fit size limit]';
+  return { text, sample: list.length, counts };
+}
+// ===== COACH CONTEXT (pure) END =====
 
 function renderFormatted(text) {
   return text.split('\n').map((line, li) => {
@@ -1640,70 +1831,221 @@ function dedupeRepeatedTail(text) {
   return out.join('\n\n');
 }
 
+async function apiCoachListConversations() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/ai_coach_conversations?select=id,title,topic,updated_at&order=updated_at.desc&limit=30`, { headers: HEADERS });
+  if (!res.ok) throw new Error('list failed');
+  return res.json();
+}
+async function apiCoachCreateConversation(topic) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/ai_coach_conversations`, {
+    method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' },
+    body: JSON.stringify({ title: 'New conversation', topic }),
+  });
+  if (!res.ok) throw new Error('create failed');
+  return (await res.json())[0];
+}
+async function apiCoachLoadMessages(id) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/ai_coach_messages?conversation_id=eq.${id}&select=id,role,content&order=created_at.asc&limit=100`, { headers: HEADERS });
+  if (!res.ok) throw new Error('load failed');
+  return res.json();
+}
+async function apiCoachRenameConversation(id, title) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/ai_coach_conversations?id=eq.${id}`, { method: 'PATCH', headers: HEADERS, body: JSON.stringify({ title }) });
+  if (!res.ok) throw new Error('rename failed');
+}
+async function apiCoachDeleteConversation(id) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/ai_coach_conversations?id=eq.${id}`, { method: 'DELETE', headers: HEADERS });
+  if (!res.ok) throw new Error('delete failed');
+}
+
 function AIMentorView({ trades, onClose }) {
-  const [topic, setTopic] = useState('General');
+  const [view, setView] = useState('chat'); // chat | history
+  const [conversations, setConversations] = useState([]);
+  const [historyError, setHistoryError] = useState('');
+  const [convId, setConvId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [topic, setTopic] = useState(COACH_TOPICS[0]);
+  const [scope, setScope] = useState(COACH_SCOPES[0]);
+  const [strategy, setStrategy] = useState('All strategies');
+  const [riskPrefs, setRiskPrefs] = useState(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const bottomRef = useRef(null);
 
-  function checkAndBumpDailyLimit() {
-    const key = 'mentor_usage_' + new Date().toISOString().slice(0, 10);
-    const count = Number(localStorage.getItem(key) || '0');
-    if (count >= 15) return false;
-    localStorage.setItem(key, String(count + 1));
-    return true;
+  useEffect(() => {
+    (async () => {
+      try { setConversations(await apiCoachListConversations()); }
+      catch (e) { setHistoryError('Saved conversations are unavailable right now. You can still chat, but this chat may not be saved.'); }
+      try { if (CURRENT_USER_ID) setRiskPrefs(await apiGetPrimaryTradingAccount(CURRENT_USER_ID)); } catch (e) { /* risk prefs are optional context */ }
+    })();
+  }, []);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages.length, sending]);
+
+  const closedTrades = trades.filter(t => (t.status || 'closed') === 'closed');
+  const strategies = ['All strategies', ...Array.from(new Set(closedTrades.map(t => t.strategy || 'Unspecified'))).slice(0, 30)];
+  const ctxInfo = buildCoachContext({ trades, topic, scope, strategy, riskPrefs });
+
+  function newConversation() { setConvId(null); setMessages([]); setError(''); setNotice(''); setView('chat'); }
+
+  async function openConversation(c) {
+    setError(''); setNotice('');
+    try {
+      const rows = await apiCoachLoadMessages(c.id);
+      setMessages(rows.map(r => ({ role: r.role, content: r.content })));
+      setConvId(c.id);
+      if (COACH_TOPICS.includes(c.topic)) setTopic(c.topic);
+      setView('chat');
+    } catch (e) { setError('Could not open that conversation.'); }
   }
 
-  async function sendMessage() {
-    const text = input.trim();
+  async function saveRename(id) {
+    const title = renameValue.trim().slice(0, 60);
+    if (!title) { setRenamingId(null); return; }
+    try {
+      await apiCoachRenameConversation(id, title);
+      setConversations(prev => prev.map(c => (c.id === id ? { ...c, title } : c)));
+    } catch (e) { setHistoryError('Could not rename that conversation.'); }
+    setRenamingId(null);
+  }
+
+  async function removeConversation(id) {
+    try {
+      await apiCoachDeleteConversation(id);
+      setConversations(prev => prev.filter(c => c.id !== id));
+      if (convId === id) { setConvId(null); setMessages([]); } // stay on the History list; just clear the open chat
+    } catch (e) { setHistoryError('Could not delete that conversation.'); }
+    setConfirmDeleteId(null);
+  }
+
+  async function sendMessage(preset) {
+    const text = (typeof preset === 'string' ? preset : input).trim();
     if (!text || sending) return;
-    if (!checkAndBumpDailyLimit()) {
-      setError("You've reached today's AI Mentor limit (free-tier protection). Your statistical Coach is still fully available.");
+    setError(''); setNotice('');
+    setSending(true);
+    let id = convId;
+    let createdNow = false;
+    try {
+      if (!id) {
+        const c = await apiCoachCreateConversation(topic);
+        id = c.id; createdNow = true;
+        setConvId(id);
+        setConversations(prev => [c, ...prev]);
+      }
+    } catch (e) {
+      setSending(false);
+      setError('Could not start a conversation. Chat history may not be set up yet — please try again later.');
       return;
     }
-    setError('');
-    const newMessages = [...messages, { role: 'user', content: text }];
-    setMessages(newMessages);
+    setMessages(prev => [...prev, { role: 'user', content: text }]);
     setInput('');
-    setSending(true);
     try {
-      const statsContext = buildStatsContext(trades, topic);
-      const fullSystemPrompt = `${MENTOR_SYSTEM_PROMPT}\n\nCurrent topic: ${topic}\n\n${statsContext}`;
       const res = await fetch('/api/mentor', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ systemPrompt: fullSystemPrompt, messages: newMessages }),
+        headers: { 'Content-Type': 'application/json', Authorization: HEADERS.Authorization },
+        body: JSON.stringify({ conversationId: id, message: text, topic, context: ctxInfo.text }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Request failed');
+      let data = {};
+      try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
+      if (!res.ok) throw new Error(data.error || 'The AI Coach could not answer right now. Please try again.');
       setMessages(prev => [...prev, { role: 'assistant', content: dedupeRepeatedTail(data.reply) }]);
+      if (data.saved === false) setNotice("This reply couldn't be saved to your history.");
+      if (data.title) setConversations(prev => prev.map(c => (c.id === id ? { ...c, title: data.title, updated_at: new Date().toISOString() } : c)));
     } catch (e) {
-      console.error('[Mentor] send failed:', e);
-      setError(e.message || 'Could not reach the AI Mentor. Try the statistical Coach instead.');
+      setMessages(prev => prev.slice(0, -1)); // remove the unanswered message so a retry doesn't duplicate it
+      setInput(text);
+      const offline = e instanceof TypeError;
+      setError(offline ? 'Network problem — check your connection and try again.' : e.message);
+      if (createdNow) { apiCoachDeleteConversation(id).catch(() => {}); setConversations(prev => prev.filter(c => c.id !== id)); setConvId(null); }
     } finally {
       setSending(false);
     }
   }
 
+  if (view === 'history') {
+    return (
+      <>
+        <button onClick={() => setView('chat')} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to chat</button>
+        <div className="flex items-center justify-between">
+          <p className="font-display text-[16px] font-semibold">Conversations</p>
+          <button onClick={newConversation} className="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-[#6B21A8] text-white">New</button>
+        </div>
+        {historyError && <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B]">{historyError}</div>}
+        {conversations.length === 0 && !historyError && <p className="text-[12px] text-[#6B7280]">No saved conversations yet.</p>}
+        <div className="space-y-2">
+          {conversations.map(c => (
+            <div key={c.id} className="rounded-xl bg-[#070509] border border-white/[0.06] p-4">
+              {renamingId === c.id ? (
+                <div className="space-y-2">
+                  <input value={renameValue} maxLength={60} onChange={e => setRenameValue(e.target.value)} className={inputCls} />
+                  <div className="flex gap-2">
+                    <button onClick={() => setRenamingId(null)} className="flex-1 py-2 rounded-lg text-[11px] bg-[#1F1A29] text-[#9CA3AF]">Cancel</button>
+                    <button onClick={() => saveRename(c.id)} className="flex-1 py-2 rounded-lg text-[11px] font-semibold bg-[#6B21A8] text-white">Save</button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <button onClick={() => openConversation(c)} className="w-full text-left">
+                    <p className="text-[13px] font-medium">{c.title}</p>
+                    <p className="text-[10px] text-[#6B7280] mt-0.5">{c.topic} · {new Date(c.updated_at).toLocaleDateString()}</p>
+                  </button>
+                  {confirmDeleteId === c.id ? (
+                    <div className="flex items-center gap-2 mt-3">
+                      <p className="text-[11px] text-[#EF4444] flex-1">Delete this conversation permanently?</p>
+                      <button onClick={() => setConfirmDeleteId(null)} className="px-3 py-1.5 rounded-lg text-[11px] bg-[#1F1A29] text-[#9CA3AF]">No</button>
+                      <button onClick={() => removeConversation(c.id)} className="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-[#EF4444] text-white">Yes</button>
+                    </div>
+                  ) : (
+                    <div className="flex gap-4 mt-3">
+                      <button onClick={() => { setRenamingId(c.id); setRenameValue(c.title); }} className="text-[11px] text-[#B58BE0]">Rename</button>
+                      <button onClick={() => setConfirmDeleteId(c.id)} className="text-[11px] text-[#EF4444]">Delete</button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
-      {onClose && <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back to Stats</button>}
+      {onClose && <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>}
       <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
-        <p className="text-[12px] font-semibold mb-1">RTrade AI Mentor</p>
-        <p className="text-[12px] text-[#6B7280]">Discuss your trading. Understand your patterns. Not a signal service — grounded in your own journal data.</p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[12px] font-semibold mb-1">RTrade AI Coach</p>
+            <p className="text-[12px] text-[#6B7280]">Learn from your own journal. Educational analysis — not a signal service.</p>
+          </div>
+          <div className="flex gap-3 shrink-0">
+            <button onClick={() => setView('history')} className="text-[11px] text-[#B58BE0]">History</button>
+            <button onClick={newConversation} className="text-[11px] text-[#B58BE0]">New</button>
+          </div>
+        </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {MENTOR_TOPICS.map(t => (
-          <button key={t} onClick={() => setTopic(t)} className={`shrink-0 px-3.5 py-1.5 rounded-lg text-[11px] font-medium border ${topic === t ? 'bg-[#6B21A8]/15 border-[#6B21A8]/50 text-[#6B21A8]' : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>{t}</button>
-        ))}
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 space-y-3">
+        <Field label="Topic"><select value={topic} onChange={e => setTopic(e.target.value)} className={inputCls}>{COACH_TOPICS.map(t => <option key={t} value={t}>{t}</option>)}</select></Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Period"><select value={scope} onChange={e => setScope(e.target.value)} className={inputCls}>{COACH_SCOPES.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
+          <Field label="Strategy"><select value={strategy} onChange={e => setStrategy(e.target.value)} className={inputCls}>{strategies.map(s => <option key={s} value={s}>{s}</option>)}</select></Field>
+        </div>
+        <p className="text-[11px] text-[#6B7280]">Analyzing <span className="text-[#E8E9EC]">{ctxInfo.sample}</span> closed trade{ctxInfo.sample === 1 ? '' : 's'} · planned, open &amp; cancelled trades are excluded from results.</p>
       </div>
 
       <div className="space-y-3">
         {messages.length === 0 && (
-          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4">
-            <p className="text-[12px] text-[#6B7280]">Ask something specific — e.g. "Why do I keep losing on short trades?" or "Is my risk sizing consistent?" The Mentor will use your real {topic.toLowerCase()} data to answer.</p>
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 space-y-3">
+            <p className="text-[12px] text-[#6B7280]">Ask anything about your trading. Try one of these:</p>
+            <div className="flex flex-wrap gap-2">
+              {COACH_STARTERS.map(s => <button key={s} onClick={() => sendMessage(s)} disabled={sending} className="px-3 py-2 rounded-xl text-[11px] text-left border bg-[#0C0810] border-white/[0.08] text-[#9CA3AF] disabled:opacity-40">{s}</button>)}
+            </div>
           </div>
         )}
         {messages.map((m, i) => (
@@ -1712,21 +2054,24 @@ function AIMentorView({ trades, onClose }) {
           </div>
         ))}
         {sending && <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 max-w-[88%]"><p className="text-[12px] text-[#6B7280]">Thinking...</p></div>}
+        <div ref={bottomRef} />
       </div>
 
+      {historyError && messages.length === 0 && <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B]">{historyError}</div>}
+      {notice && <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B]">{notice}</div>}
       {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-[11px] text-[#EF4444]">{error}</div>}
 
       <div className="flex gap-2 sticky bottom-2">
         <input
-          type="text"
-          value={input}
+          type="text" maxLength={1000} value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          placeholder="Ask your mentor..."
+          placeholder="Ask your coach..."
           className={inputCls}
         />
-        <button onClick={sendMessage} disabled={sending || !input.trim()} className="px-4 rounded-xl bg-[#6B21A8] text-black text-[12px] font-semibold shrink-0 disabled:opacity-40">Send</button>
+        <button onClick={() => sendMessage()} disabled={sending || !input.trim()} className="px-4 rounded-xl bg-[#6B21A8] text-white text-[12px] font-semibold shrink-0 disabled:opacity-40">Send</button>
       </div>
+      <p className="text-[10px] text-[#6B7280] leading-relaxed">Educational journal analysis, not financial advice. Your message and the selected journal summary are sent to a third-party AI provider (OpenRouter) to generate replies. The Coach has no live market data.</p>
     </>
   );
 }
@@ -3861,7 +4206,7 @@ function AppShell({ user, onLogout }) {
         ) : moreDetailView === 'risk' ? (
           <RiskManagementView trades={trades.filter(t => (t.status || 'closed') === 'closed')} onClose={() => setMoreDetailView(null)} />
         ) : moreDetailView === 'mentor' ? (
-          <AIMentorView trades={trades.filter(t => (t.status || 'closed') === 'closed')} onClose={() => setMoreDetailView(null)} />
+          <AIMentorView trades={trades} onClose={() => setMoreDetailView(null)} />
         ) : moreDetailView === 'csv' ? (
           <CsvImportView trades={trades} onClose={() => setMoreDetailView(null)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
         ) : moreDetailView === 'calc' ? (
