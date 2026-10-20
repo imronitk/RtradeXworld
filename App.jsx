@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { LayoutDashboard, NotebookPen, CalendarDays, BarChart3, BookOpen, TrendingUp, TrendingDown, Flame, Target, Activity, Check, Star, Search, ChevronLeft, Trash2, AlertCircle, Camera, ShieldCheck, Sparkles, Menu, Upload } from 'lucide-react';
-import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell } from 'recharts';
+import { AreaChart, Area, ResponsiveContainer, YAxis, BarChart, Bar, XAxis, Cell, Tooltip } from 'recharts';
 import Papa from 'papaparse';
 
 // ===== SUPABASE CONNECTION =====
@@ -183,11 +183,36 @@ async function uploadScreenshot(file) {
   return `${SUPABASE_URL}/storage/v1/object/public/trade-screenshots/${path}`;
 }
 
+// ===== TRADES LOADER (paged) START =====
+// Supabase caps one read at its project "max rows" (default 1000), which would silently truncate long histories
+// and make every statistic wrong. Read in pages instead, up to a safety ceiling, and remember if anything was left out.
+const TRADES_PAGE_SIZE = 1000;
+const TRADES_MAX_LOADED = 10000;
+let TRADES_TRUNCATED_TOTAL = null;
+function getTradesTruncatedTotal() { return TRADES_TRUNCATED_TOTAL; }
 async function apiGet() {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/trades?select=*&order=date.desc,created_at.desc`, { headers: HEADERS });
-  if (!res.ok) throw new Error(`Database read failed (${res.status}): ${await res.text()}`);
-  return (await res.json()).map(fromDb);
+  const rows = [];
+  let total = null;
+  TRADES_TRUNCATED_TOTAL = null;
+  while (rows.length < TRADES_MAX_LOADED) {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/trades?select=*&order=date.desc,created_at.desc,id.desc&limit=${TRADES_PAGE_SIZE}&offset=${rows.length}`,
+      { headers: { ...HEADERS, Prefer: 'count=exact' } },
+    );
+    if (!res.ok) throw new Error(`Database read failed (${res.status}): ${await res.text()}`);
+    if (total === null) {
+      const m = String(res.headers.get('content-range') || '').match(/\/(\d+)$/);
+      if (m) total = Number(m[1]);
+    }
+    const page = await res.json();
+    if (!Array.isArray(page) || page.length === 0) break;
+    rows.push(...page);
+    if (total !== null && rows.length >= total) break;
+  }
+  if (total !== null && total > rows.length) TRADES_TRUNCATED_TOTAL = total;
+  return rows.map(fromDb);
 }
+// ===== TRADES LOADER (paged) END =====
 async function apiInsert(trade) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/trades`, {
     method: 'POST', headers: { ...HEADERS, Prefer: 'return=representation' }, body: JSON.stringify(toDb(trade)),
@@ -2864,13 +2889,595 @@ function CoachView({ trades, onClose }) {
   );
 }
 
-function StatsView({ trades }) {
+// ===== EDGE ANALYTICS ENGINE (pure) START =====
+// Single source of truth for realized-performance statistics.
+// CONVENTIONS (documented on screen too):
+//  - Eligible trade = status closed (legacy rows with no status count as closed) AND a finite saved P&L.
+//  - Win = P&L > 0, Loss = P&L < 0, Break-even = P&L exactly 0 (counted in the win-rate denominator, never as win or loss).
+//  - Date filter uses each trade's saved trade date (YYYY-MM-DD string); no timezone conversion is applied to it.
+//  - Valid R = finite saved R-multiple AND initial risk > 0. Anything else is "R unavailable" and excluded from R metrics.
+//  - Drawdown is measured on cumulative closed-trade P&L starting from 0 (NOT account equity).
+//  - Ordering = trade date, then trade id (logging order) for same-day trades.
+//  - Sample thresholds are descriptive heuristics only, not statistical guarantees.
+const EDGE_VERY_SMALL = 10;
+const EDGE_SMALL = 30;
+
+function edgeNum(x) {
+  if (x === null || x === undefined || typeof x === 'boolean') return null;
+  if (typeof x === 'string' && x.trim() === '') return null; // blank text is missing data, never a zero
+  const n = Number(x);
+  return Number.isFinite(n) ? n : null;
+}
+function edgeLabel(v, upper) {
+  const s = String(v === null || v === undefined ? '' : v).replace(/\s+/g, ' ').trim();
+  return s === '' ? null : (upper ? s.toUpperCase() : s);
+}
+function edgeIsEligible(t) {
+  return !!t && (t.status || 'closed') === 'closed' && edgeNum(t.pnl) !== null;
+}
+function edgeValidR(t) {
+  const r = edgeNum(t.rMultiple), risk = edgeNum(t.risk);
+  return r !== null && risk !== null && risk > 0;
+}
+function edgeSampleLevel(n) { return n < EDGE_VERY_SMALL ? 'very_small' : n < EDGE_SMALL ? 'small' : 'ok'; }
+function edgeValidDate(d) { return typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d); }
+
+function edgeChrono(list) {
+  return list.map((t, i) => ({ t, i }))
+    .sort((a, b) => {
+      const da = edgeValidDate(a.t.date) ? a.t.date.slice(0, 10) : '', db = edgeValidDate(b.t.date) ? b.t.date.slice(0, 10) : '';
+      if (da !== db) return da < db ? -1 : 1;
+      const ia = edgeNum(a.t.id), ib = edgeNum(b.t.id);
+      if (ia !== null && ib !== null && ia !== ib) return ia - ib;
+      return a.i - b.i;
+    }).map(x => x.t);
+}
+
+// Scope = lifecycle + dedupe + user filters. Returns the eligible list and what was left out (so the UI can say so).
+function edgeScope(trades, f = {}) {
+  const all = Array.isArray(trades) ? trades : [];
+  const excluded = { planned: 0, open: 0, cancelled: 0, invalid: 0, duplicates: 0, undated: 0 };
+  const seen = new Set();
+  const base = [];
+  all.forEach(t => {
+    if (!t) return;
+    const st = t.status || 'closed';
+    if (st === 'planned') { excluded.planned++; return; }
+    if (st === 'open') { excluded.open++; return; }
+    if (st === 'cancelled') { excluded.cancelled++; return; }
+    if (!edgeIsEligible(t)) { excluded.invalid++; return; }
+    if (t.id !== undefined && t.id !== null && t.id !== '') {
+      const k = String(t.id);
+      if (seen.has(k)) { excluded.duplicates++; return; }
+      seen.add(k);
+    }
+    base.push(t);
+  });
+  const from = f.from || null, to = f.to || null;
+  if (from && to && from > to) return { list: [], base, excluded, error: 'range' };
+  const strat = f.strategy || null, setup = f.setup || null, sym = f.symbol || null;
+  const list = base.filter(t => {
+    if (from || to) {
+      if (!edgeValidDate(t.date)) { excluded.undated++; return false; }
+      const d = t.date.slice(0, 10);
+      if (from && d < from) return false;
+      if (to && d > to) return false;
+    }
+    if (strat && (edgeLabel(t.strategy) || 'Not recorded') !== strat) return false;
+    if (setup && (edgeLabel(t.setup) || 'Not recorded') !== setup) return false;
+    if (sym && (edgeLabel(t.symbol, true) || 'Not recorded') !== sym) return false;
+    return true;
+  });
+  return { list, base, excluded, error: null };
+}
+
+function edgeCore(list) {
+  const n = list.length;
+  let wins = 0, losses = 0, grossProfit = 0, grossLoss = 0, net = 0, rSum = 0, rCount = 0;
+  list.forEach(t => {
+    const p = edgeNum(t.pnl) || 0;
+    net += p;
+    if (p > 0) { wins++; grossProfit += p; } else if (p < 0) { losses++; grossLoss += -p; }
+    if (edgeValidR(t)) { rSum += edgeNum(t.rMultiple); rCount++; }
+  });
+  const avgWin = wins ? grossProfit / wins : null;
+  const avgLoss = losses ? grossLoss / losses : null;
+  return {
+    n, wins, losses, breakEven: n - wins - losses, net, grossProfit, grossLoss,
+    winRate: n ? (wins / n) * 100 : null,
+    avgWin, avgLoss,
+    payoffRatio: avgWin !== null && avgLoss !== null && avgLoss > 0 ? avgWin / avgLoss : null,
+    expectancy: n ? net / n : null,
+    profitFactor: grossLoss > 0 ? grossProfit / grossLoss : null,
+    profitFactorNote: grossLoss > 0 ? null : (grossProfit > 0 ? 'no_losses' : 'no_pnl'),
+    avgR: rCount ? rSum / rCount : null, rCount,
+    sample: edgeSampleLevel(n),
+  };
+}
+
+function edgeDrawdown(chrono) {
+  let run = 0, peak = 0, peakDate = null, maxDD = 0, ddPeakDate = null, ddTroughDate = null;
+  chrono.forEach(t => {
+    run += edgeNum(t.pnl) || 0;
+    const d = edgeValidDate(t.date) ? t.date.slice(0, 10) : null;
+    if (run > peak) { peak = run; peakDate = d; }
+    const dd = peak - run;
+    if (dd > maxDD) { maxDD = dd; ddPeakDate = peakDate; ddTroughDate = d; }
+  });
+  return { maxDrawdown: maxDD, currentDrawdown: peak - run, peakDate: ddPeakDate, troughDate: ddTroughDate, finalCumulative: run };
+}
+
+function edgeStreaks(chrono) {
+  const seq = chrono.filter(t => (edgeNum(t.pnl) || 0) !== 0); // break-even trades neither extend nor break a streak
+  let lw = 0, ll = 0, rw = 0, rl = 0;
+  seq.forEach(t => { if (edgeNum(t.pnl) > 0) { rw++; rl = 0; lw = Math.max(lw, rw); } else { rl++; rw = 0; ll = Math.max(ll, rl); } });
+  let cur = 0, type = null;
+  for (let i = seq.length - 1; i >= 0; i--) {
+    const w = edgeNum(seq[i].pnl) > 0;
+    if (type === null) { type = w ? 'win' : 'loss'; cur = 1; }
+    else if ((w && type === 'win') || (!w && type === 'loss')) cur++;
+    else break;
+  }
+  return { longestWin: lw, longestLoss: ll, current: cur, currentType: type };
+}
+
+function edgeStats(list) {
+  const chrono = edgeChrono(list);
+  return { ...edgeCore(list), drawdown: edgeDrawdown(chrono), streaks: edgeStreaks(chrono) };
+}
+
+// Cumulative closed-trade P&L, one point per trading date. Downsampled for very long histories but always
+// keeps the first, last, highest and lowest points so the shape and the drawdown trough stay visible.
+function edgeEquitySeries(list, maxPoints = 200) {
+  const chrono = edgeChrono(list);
+  const pts = [];
+  let run = 0;
+  chrono.forEach(t => {
+    run += edgeNum(t.pnl) || 0;
+    const d = edgeValidDate(t.date) ? t.date.slice(0, 10) : 'No date';
+    const last = pts[pts.length - 1];
+    if (last && last.date === d) { last.cum = run; last.trades++; last.dayPnl += edgeNum(t.pnl) || 0; }
+    else pts.push({ date: d, cum: run, trades: 1, dayPnl: edgeNum(t.pnl) || 0 });
+  });
+  if (pts.length <= maxPoints) return pts;
+  const keep = new Set([0, pts.length - 1]);
+  let mi = 0, ma = 0;
+  pts.forEach((p, i) => { if (p.cum < pts[mi].cum) mi = i; if (p.cum > pts[ma].cum) ma = i; });
+  keep.add(mi); keep.add(ma);
+  const step = (pts.length - 1) / (maxPoints - 5);
+  for (let k = 0; k <= maxPoints - 5; k++) keep.add(Math.round(k * step));
+  return [...keep].sort((a, b) => a - b).map(i => pts[i]);
+}
+
+const EDGE_R_BINS = [['≤ -2R', -Infinity, -2], ['-2 to -1R', -2, -1], ['-1 to 0R', -1, 0], ['0 to 1R', 0, 1], ['1 to 2R', 1, 2], ['2 to 3R', 2, 3], ['≥ 3R', 3, Infinity]];
+function edgeRDistribution(list) {
+  const rs = list.filter(edgeValidR).map(t => edgeNum(t.rMultiple));
+  const bins = EDGE_R_BINS.map(([label, lo, hi]) => ({ label, lo, hi, count: 0 }));
+  // bins are left-inclusive: exactly -1R falls in "-1 to 0R"; exactly 0R in "0 to 1R"
+  rs.forEach(r => { const b = bins.find(x => r >= x.lo && r < x.hi); if (b) b.count++; });
+  return { bins, rCount: rs.length };
+}
+
+// Group performance by any journal field. Groups are ordered by trade count (never by profit) so a tiny
+// lucky group can't masquerade as the "best" one. Missing values are their own "Not recorded" group.
+function edgeBreakdown(list, keyFn, opts = {}) {
+  const missingLabel = opts.missingLabel || 'Not recorded';
+  const maxGroups = opts.maxGroups || 12;
+  const buckets = new Map();
+  let recorded = 0;
+  list.forEach(t => {
+    const raw = keyFn(t);
+    const k = edgeLabel(raw, opts.upper);
+    const key = k === null ? null : k;
+    if (key !== null) recorded++;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(t);
+  });
+  const toGroup = (key, arr) => ({ key: key === null ? missingLabel : key, missing: key === null, ...edgeCore(arr) });
+  let groups = [...buckets.entries()].filter(([k]) => k !== null).map(([k, arr]) => toGroup(k, arr));
+  if (opts.order) {
+    const idx = (k) => { const i = opts.order.indexOf(k); return i === -1 ? 999 : i; };
+    groups.sort((a, b) => idx(a.key) - idx(b.key) || b.n - a.n || (a.key < b.key ? -1 : 1));
+  } else {
+    groups.sort((a, b) => b.n - a.n || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  }
+  const hiddenGroups = Math.max(0, groups.length - maxGroups);
+  groups = groups.slice(0, maxGroups);
+  if (buckets.has(null)) groups.push(toGroup(null, buckets.get(null)));
+  return { groups, recorded, total: list.length, coverage: list.length ? recorded / list.length : 0, hiddenGroups };
+}
+
+// Plan vs actual — only meaningful for trades that kept their original planned values (Phase 8 fields).
+function edgePlannedVsActual(list) {
+  const withPlan = list.filter(t => edgeNum(t.plannedEntry) !== null);
+  const out = { count: withPlan.length, total: list.length, entry: { adverse: 0, favorable: 0, same: 0, avgAdverseSlip: null, compared: 0 }, stopChanged: 0, stopCompared: 0, sizeChanged: 0, sizeCompared: 0, risk: { compared: 0, avgActualOverPlanned: null } };
+  if (!withPlan.length) return out;
+  let slipSum = 0, ratioSum = 0;
+  withPlan.forEach(t => {
+    const pe = edgeNum(t.plannedEntry), ae = edgeNum(t.entry);
+    if (pe !== null && ae !== null) {
+      const slip = t.direction === 'short' ? pe - ae : ae - pe; // positive = worse fill than planned
+      out.entry.compared++; slipSum += slip;
+      if (slip > 0) out.entry.adverse++; else if (slip < 0) out.entry.favorable++; else out.entry.same++;
+    }
+    const ps = edgeNum(t.plannedStopLoss), as = edgeNum(t.stopLoss);
+    if (ps !== null && as !== null) { out.stopCompared++; if (ps !== as) out.stopChanged++; }
+    const pz = edgeNum(t.plannedPositionSize), az = edgeNum(t.positionSize);
+    if (pz !== null && az !== null) { out.sizeCompared++; if (pz !== az) out.sizeChanged++; }
+    const pr = edgeNum(t.plannedRisk), ar = edgeNum(t.risk);
+    if (pr !== null && pr > 0 && ar !== null && ar > 0) { out.risk.compared++; ratioSum += ar / pr; }
+  });
+  out.entry.avgAdverseSlip = out.entry.compared ? slipSum / out.entry.compared : null;
+  out.risk.avgActualOverPlanned = out.risk.compared ? ratioSum / out.risk.compared : null;
+  return out;
+}
+
+// ---- date presets (pure string/UTC arithmetic: no timezone drift) ----
+function edgeLocalToday(now = new Date()) {
+  const p = (x) => String(x).padStart(2, '0');
+  return `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+}
+function edgeAddDays(dateStr, delta) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + delta)).toISOString().slice(0, 10);
+}
+const EDGE_PRESETS = ['All time', 'This month', 'Last 30 days', 'Last 90 days', 'This year', 'Custom range'];
+function edgePreset(name, todayStr) {
+  if (name === 'This month') return { from: todayStr.slice(0, 7) + '-01', to: todayStr };
+  if (name === 'Last 30 days') return { from: edgeAddDays(todayStr, -29), to: todayStr };   // 30 calendar days including today
+  if (name === 'Last 90 days') return { from: edgeAddDays(todayStr, -89), to: todayStr };
+  if (name === 'This year') return { from: todayStr.slice(0, 4) + '-01-01', to: todayStr };
+  return { from: null, to: null };
+}
+// ===== EDGE ANALYTICS ENGINE (pure) END =====
+
+const edgeMoney = (n) => (n === null || n === undefined ? '—' : fmtMoney(n));
+const edgeTone = (n) => (n === null || n === undefined || n === 0 ? null : n > 0 ? 'pos' : 'neg');
+const EDGE_SAMPLE_TEXT = {
+  very_small: 'Very small sample — treat as anecdotal',
+  small: 'Small sample — results may be tentative',
+};
+
+function EdgeMetricCard({ label, value, note, tone }) {
+  const color = tone === 'pos' ? '#22C55E' : tone === 'neg' ? '#EF4444' : '#E8E9EC';
+  return (
+    <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 min-w-0" data-metric={label}>
+      <p className="text-[10px] tracking-wide text-[#6B7280] mb-1.5">{label}</p>
+      <p className="font-display text-[16px] font-semibold tracking-tight break-words" style={{ color }}>{value}</p>
+      {note && <p className="text-[10px] text-[#6B7280] mt-1 leading-snug">{note}</p>}
+    </div>
+  );
+}
+
+function EdgeEquityTooltip({ active, payload }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="rounded-lg bg-[#0C0810] border border-white/[0.12] px-3 py-2 text-[11px]">
+      <p className="text-[#9CA3AF]">{p.date}</p>
+      <p className="font-semibold" style={{ color: p.cum >= 0 ? '#22C55E' : '#EF4444' }}>Cumulative {edgeMoney(p.cum)}</p>
+      <p className="text-[#6B7280]">{p.trades} trade{p.trades === 1 ? '' : 's'} that day ({edgeMoney(p.dayPnl)})</p>
+    </div>
+  );
+}
+function EdgeRTooltip({ active, payload }) {
+  if (!active || !payload || !payload.length) return null;
+  const p = payload[0].payload;
+  return (
+    <div className="rounded-lg bg-[#0C0810] border border-white/[0.12] px-3 py-2 text-[11px]">
+      <p className="text-[#9CA3AF]">{p.label}</p>
+      <p className="font-semibold">{p.count} trade{p.count === 1 ? '' : 's'}</p>
+    </div>
+  );
+}
+
+function EdgeBreakdownSection({ title, bd, note }) {
+  const [open, setOpen] = useState(false);
+  const hasData = bd.recorded > 0;
+  const subtitle = bd.total === 0 ? 'No trades' : hasData ? `${bd.recorded} of ${bd.total} trades have this recorded` : 'Not recorded on any trade yet';
+  return (
+    <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden" data-breakdown={title}>
+      <button type="button" onClick={() => setOpen(o => !o)} className="w-full flex items-center justify-between px-4 py-3.5 text-left">
+        <div className="min-w-0">
+          <p className="text-[12px] font-medium">{title}</p>
+          <p className="text-[10px] text-[#6B7280] mt-0.5">{subtitle}</p>
+        </div>
+        <ChevronLeft size={14} className={`text-[#6B7280] shrink-0 transition-transform ${open ? '-rotate-90' : 'rotate-180'}`} />
+      </button>
+      {open && (
+        <div className="px-4 pb-4 space-y-3">
+          {note && <p className="text-[10px] text-[#6B7280] leading-snug">{note}</p>}
+          {!hasData ? (
+            <p className="text-[11px] text-[#6B7280] leading-relaxed">None of these trades have this recorded, so there is nothing to analyse yet. That is missing data — not zero performance.</p>
+          ) : (
+            <>
+              {bd.coverage < 1 && (
+                <p className="text-[10px] text-[#F59E0B] leading-snug">Limited: {bd.total - bd.recorded} of {bd.total} trades have no value here, so these results cover only part of your trades.</p>
+              )}
+              {bd.groups.map(g => (
+                <div key={g.key} className={`rounded-xl border p-3 ${g.missing ? 'border-dashed border-white/[0.08] opacity-70' : 'border-white/[0.06] bg-[#0C0810]'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="text-[12px] font-medium min-w-0 break-words">{g.key}</p>
+                    <p className="text-[11px] text-[#9CA3AF] shrink-0">{g.n} trade{g.n === 1 ? '' : 's'}</p>
+                  </div>
+                  {g.missing ? (
+                    <p className="text-[10px] text-[#6B7280] mt-1">No value recorded — shown for completeness, not performance.</p>
+                  ) : (
+                    <>
+                      {g.sample !== 'ok' && <p className="text-[10px] text-[#F59E0B] mt-1">{EDGE_SAMPLE_TEXT[g.sample]}</p>}
+                      <div className="grid grid-cols-3 gap-2 mt-2 text-[11px]">
+                        <div><p className="text-[#6B7280] text-[10px]">Net P&amp;L</p><p className="font-semibold" style={{ color: g.net > 0 ? '#22C55E' : g.net < 0 ? '#EF4444' : '#E8E9EC' }}>{edgeMoney(g.net)}</p></div>
+                        <div><p className="text-[#6B7280] text-[10px]">Win rate</p><p className="font-semibold">{g.winRate === null ? '—' : `${g.winRate.toFixed(0)}%`}</p></div>
+                        <div><p className="text-[#6B7280] text-[10px]">Expectancy</p><p className="font-semibold">{edgeMoney(g.expectancy)}</p></div>
+                      </div>
+                      <p className="text-[10px] text-[#6B7280] mt-2">{g.avgR === null ? 'R unavailable (no trades with valid initial risk)' : `Avg R ${g.avgR.toFixed(2)}R · based on ${g.rCount} of ${g.n} trades with valid risk`}</p>
+                    </>
+                  )}
+                </div>
+              ))}
+              {bd.hiddenGroups > 0 && <p className="text-[10px] text-[#6B7280]">+ {bd.hiddenGroups} more group{bd.hiddenGroups === 1 ? '' : 's'} with fewer trades not shown.</p>}
+              <p className="text-[10px] text-[#6B7280] leading-snug">Groups are ordered by number of trades, not by profit, so a small lucky group is never ranked as "best".</p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const EDGE_BREAKDOWN_GROUPS = [
+  { heading: 'Strategy, setup & market', items: [
+    { id: 'strategy', title: 'Strategy', key: t => t.strategy },
+    { id: 'setup', title: 'Setup', key: t => t.setup },
+    { id: 'symbol', title: 'Instrument / pair', key: t => t.symbol, upper: true },
+    { id: 'session', title: 'Trading session', key: t => t.session },
+    { id: 'timeframe', title: 'Timeframe', key: t => t.timeframe },
+    { id: 'marketCondition', title: 'Market condition', key: t => t.marketCondition },
+  ] },
+  { heading: 'Psychology (self-reported)', items: [
+    { id: 'emotion', title: 'Emotion before trade', key: t => t.emotion, note: "The trade form pre-selects 'Calm', so some entries may not be deliberate choices." },
+    { id: 'emotionDuring', title: 'Emotion during trade', key: t => t.emotionDuring },
+    { id: 'emotionAfter', title: 'Emotion after trade', key: t => t.emotionAfter },
+    { id: 'mistake', title: 'Self-classified mistake', key: t => t.mistake, note: "The trade form pre-selects 'None', so it may include trades you never reviewed for mistakes." },
+  ] },
+  { heading: 'Discipline (self-reported)', items: [
+    { id: 'planFollowed', title: 'Followed my trading plan?', key: t => t.planFollowed, order: YES_PARTIAL_NO },
+    { id: 'riskFollowed', title: 'Followed my risk rules?', key: t => t.riskFollowed, order: YES_PARTIAL_NO },
+    { id: 'setupFollowed', title: 'Followed my setup?', key: t => t.setupFollowed, order: YES_PARTIAL_NO },
+    { id: 'entryRulesFollowed', title: 'Respected my entry rules?', key: t => t.entryRulesFollowed, order: YES_PARTIAL_NO },
+    { id: 'exitRulesFollowed', title: 'Respected my exit rules?', key: t => t.exitRulesFollowed, order: YES_PARTIAL_NO },
+  ] },
+];
+
+function EdgeAnalyticsView({ trades, loading, loadError, onClose }) {
+  const [preset, setPreset] = useState('All time');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [strategy, setStrategy] = useState('All');
+  const [setup, setSetup] = useState('All');
+  const [symbol, setSymbol] = useState('All');
+  const [showHow, setShowHow] = useState(false);
+
+  const today = edgeLocalToday();
+  const range = preset === 'Custom range' ? { from: customFrom || null, to: customTo || null } : edgePreset(preset, today);
+
+  const computed = useMemo(() => {
+    try {
+      const filters = { from: range.from, to: range.to, strategy: strategy === 'All' ? null : strategy, setup: setup === 'All' ? null : setup, symbol: symbol === 'All' ? null : symbol };
+      const sc = edgeScope(trades || [], filters);
+      const list = sc.list;
+      const options = (keyFn, upper) => {
+        const m = new Map();
+        sc.base.forEach(t => { const k = edgeLabel(keyFn(t), upper) || 'Not recorded'; m.set(k, (m.get(k) || 0) + 1); });
+        return [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 60);
+      };
+      return {
+        sc, list, stats: edgeStats(list), series: edgeEquitySeries(list), rDist: edgeRDistribution(list),
+        pva: edgePlannedVsActual(list),
+        breakdowns: EDGE_BREAKDOWN_GROUPS.map(g => ({ heading: g.heading, items: g.items.map(it => ({ ...it, bd: edgeBreakdown(list, it.key, { upper: it.upper, order: it.order }) })) })),
+        opts: { strategy: options(t => t.strategy), setup: options(t => t.setup), symbol: options(t => t.symbol, true) },
+      };
+    } catch (e) {
+      console.error('[Edge] analytics failed:', e);
+      return null;
+    }
+  }, [trades, range.from, range.to, strategy, setup, symbol]);
+
+  const truncatedTotal = getTradesTruncatedTotal();
+  const resetFilters = () => { setPreset('All time'); setCustomFrom(''); setCustomTo(''); setStrategy('All'); setSetup('All'); setSymbol('All'); };
+  const filtersActive = preset !== 'All time' || strategy !== 'All' || setup !== 'All' || symbol !== 'All';
+
+  const header = (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
+      <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
+        <p className="text-[12px] font-semibold mb-1">Trading Edge Analytics</p>
+        <p className="text-[12px] text-[#6B7280] leading-relaxed">Realized results from your closed trades. Historical results describe the past — they are not a guarantee of future performance.</p>
+      </div>
+    </>
+  );
+
+  if (loading) return <>{header}<div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center"><p className="text-[12px] text-[#6B7280]">Loading your trades…</p></div></>;
+  if (loadError) return <>{header}<div className="rounded-2xl bg-[#EF4444]/10 border border-[#EF4444]/30 p-5"><p className="text-[12px] text-[#EF4444]">Your trades could not be loaded, so analytics can't be shown. Please refresh and try again.</p></div></>;
+  if (!computed) return <>{header}<div className="rounded-2xl bg-[#EF4444]/10 border border-[#EF4444]/30 p-5"><p className="text-[12px] text-[#EF4444]">Something in your trade data couldn't be analysed. Your trades are safe — please report this so it can be fixed.</p></div></>;
+
+  const { sc, stats: s, series, rDist, pva, breakdowns, opts } = computed;
+  const ex = sc.excluded;
+  const notCounted = [ex.planned && `${ex.planned} planned`, ex.open && `${ex.open} open`, ex.cancelled && `${ex.cancelled} cancelled`, ex.invalid && `${ex.invalid} closed without a valid P&L`, ex.duplicates && `${ex.duplicates} duplicate`].filter(Boolean);
+  const lo = series.length ? Math.min(...series.map(p => p.cum)) : 0, hi = series.length ? Math.max(...series.map(p => p.cum)) : 0;
+  const pfValue = s.profitFactor === null ? 'N/A' : s.profitFactor.toFixed(2);
+  const pfNote = s.profitFactor === null ? (s.profitFactorNote === 'no_losses' ? 'No losing trades, so a ratio would be meaningless' : 'No profit or loss to compare') : 'Gross profit ÷ gross loss (above 1.00 means profits exceeded losses)';
+  const streakText = s.streaks.currentType ? `${s.streaks.current} ${s.streaks.currentType === 'win' ? 'win' : 'loss'}${s.streaks.current === 1 ? '' : s.streaks.currentType === 'win' ? 's' : 'es'}` : '—';
+  const sel = (value, onChange, options, label) => (
+    <Field label={label}><select value={value} onChange={e => onChange(e.target.value)} className={inputCls}><option value="All">All</option>{options.map(([k, c]) => <option key={k} value={k}>{k} ({c})</option>)}</select></Field>
+  );
+
+  return (
+    <>
+      {header}
+
+      <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Period"><select value={preset} onChange={e => setPreset(e.target.value)} className={inputCls}>{EDGE_PRESETS.map(p => <option key={p} value={p}>{p}</option>)}</select></Field>
+          {sel(strategy, setStrategy, opts.strategy, 'Strategy')}
+          {sel(setup, setSetup, opts.setup, 'Setup')}
+          {sel(symbol, setSymbol, opts.symbol, 'Instrument')}
+        </div>
+        {preset === 'Custom range' && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="From"><input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className={inputCls} /></Field>
+            <Field label="To"><input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className={inputCls} /></Field>
+          </div>
+        )}
+        {sc.error === 'range' && <p className="text-[11px] text-[#EF4444]">The start date is after the end date, so nothing matches. Adjust the range.</p>}
+        <p className="text-[11px] text-[#6B7280] leading-snug">Showing <span className="text-[#E8E9EC]" data-testid="edge-count">{s.n}</span> closed trade{s.n === 1 ? '' : 's'}{range.from || range.to ? ` · ${range.from || 'start'} → ${range.to || 'today'}` : ''}. Dates use each trade's saved trade date.</p>
+        {notCounted.length > 0 && <p className="text-[10px] text-[#6B7280] leading-snug">Not counted in results: {notCounted.join(', ')}.</p>}
+        <p className="text-[10px] text-[#6B7280] leading-snug">Covers all your trades. Account filtering isn't available yet because trades aren't linked to individual trading accounts.</p>
+        {filtersActive && <button onClick={resetFilters} className="text-[11px] text-[#B58BE0]">Reset filters</button>}
+      </div>
+
+      {truncatedTotal !== null && (
+        <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B] leading-snug">Only your newest {TRADES_MAX_LOADED.toLocaleString()} of {truncatedTotal.toLocaleString()} trades are loaded, so these statistics don't include your oldest trades.</div>
+      )}
+
+      {s.n === 0 ? (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-6 text-center" data-testid="edge-empty">
+          <p className="text-[12px] font-medium mb-1">{filtersActive ? 'No closed trades match these filters' : 'No closed trades yet'}</p>
+          <p className="text-[12px] text-[#6B7280] leading-relaxed">{filtersActive ? 'Try a wider period or reset the filters.' : 'Close a trade and your realized performance will appear here. Planned and open trades are not included.'}</p>
+        </div>
+      ) : (
+        <>
+          {s.sample !== 'ok' && (
+            <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B] leading-snug" data-testid="edge-sample">
+              {s.sample === 'very_small' ? `Very small sample (${s.n} closed trade${s.n === 1 ? '' : 's'}): not enough closed trades to draw a reliable conclusion.` : `Small sample (${s.n} closed trades): results may not represent your long-term edge.`}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <EdgeMetricCard label="Closed trades" value={String(s.n)} note="Completed trades in this view" />
+            <EdgeMetricCard label="Net realized P&L" value={edgeMoney(s.net)} tone={edgeTone(s.net)} note="Sum of saved P&L. Delta imports are net of fees." />
+            <EdgeMetricCard label="Wins / Losses" value={`${s.wins} / ${s.losses}`} note={`${s.breakEven} break-even (P&L exactly 0) counted separately`} />
+            <EdgeMetricCard label="Win rate" value={`${s.winRate.toFixed(1)}%`} note="Winning trades ÷ all closed trades" />
+            <EdgeMetricCard label="Average win" value={edgeMoney(s.avgWin)} tone={edgeTone(s.avgWin)} note={s.avgWin === null ? 'No winning trades' : 'Total profit ÷ winning trades'} />
+            <EdgeMetricCard label="Average loss" value={s.avgLoss === null ? '—' : `-${fmtMoney(s.avgLoss).replace('+', '').replace('-', '')}`} tone={s.avgLoss === null ? null : 'neg'} note={s.avgLoss === null ? 'No losing trades' : 'Total loss ÷ losing trades'} />
+            <EdgeMetricCard label="Win/loss ratio" value={s.payoffRatio === null ? 'N/A' : s.payoffRatio.toFixed(2)} note={s.payoffRatio === null ? 'Needs at least one win and one loss' : 'Average win ÷ average loss'} />
+            <EdgeMetricCard label="Expectancy / trade" value={edgeMoney(s.expectancy)} tone={edgeTone(s.expectancy)} note="Net P&L ÷ closed trades" />
+            <EdgeMetricCard label="Profit factor" value={pfValue} tone={s.profitFactor === null ? null : s.profitFactor > 1 ? 'pos' : s.profitFactor < 1 ? 'neg' : null} note={pfNote} />
+            <EdgeMetricCard label="Average R" value={s.avgR === null ? 'R unavailable' : `${s.avgR.toFixed(2)}R`} tone={s.avgR === null ? null : edgeTone(s.avgR)} note={s.avgR === null ? 'No trades with valid initial risk' : `Based on ${s.rCount} of ${s.n} trades with valid initial risk`} />
+            <EdgeMetricCard label="Max drawdown" value={s.drawdown.maxDrawdown > 0 ? `-${fmtMoney(s.drawdown.maxDrawdown).replace('+', '')}` : '$0.00'} tone={s.drawdown.maxDrawdown > 0 ? 'neg' : null} note="Largest fall from a peak of cumulative closed-trade P&L — not account equity" />
+            <EdgeMetricCard label="Streaks" value={`Win ${s.streaks.longestWin} · Loss ${s.streaks.longestLoss}`} note={`Longest runs. Current: ${streakText}. Same-day trades follow logging order.`} />
+          </div>
+          {s.rCount > 0 && s.rCount < s.n && <p className="text-[10px] text-[#6B7280] leading-snug">R-multiple metrics use only the {s.rCount} of {s.n} trades that have a valid initial risk.</p>}
+
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4" data-testid="edge-equity">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">Cumulative realized P&amp;L</p>
+            <p className="text-[10px] text-[#6B7280] mb-3">Running total of closed-trade P&amp;L by trade date — not account equity.</p>
+            <div className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={series} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                  <defs><linearGradient id="edgeEq" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={s.net >= 0 ? '#22C55E' : '#EF4444'} stopOpacity={0.35} /><stop offset="100%" stopColor={s.net >= 0 ? '#22C55E' : '#EF4444'} stopOpacity={0} /></linearGradient></defs>
+                  <XAxis dataKey="date" hide />
+                  <YAxis hide domain={['dataMin', 'dataMax']} />
+                  <Tooltip content={<EdgeEquityTooltip />} />
+                  <Area type="monotone" dataKey="cum" stroke={s.net >= 0 ? '#22C55E' : '#EF4444'} strokeWidth={2} fill="url(#edgeEq)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            <p className="text-[10px] text-[#6B7280] mt-2">Low {edgeMoney(lo)} · High {edgeMoney(hi)} · Latest {edgeMoney(series[series.length - 1].cum)}{series.length < 2 ? ' · one trading day so far' : ''}</p>
+          </div>
+
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4" data-testid="edge-outcomes">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-3">Win / loss distribution</p>
+            <div className="flex h-3 rounded-full overflow-hidden bg-[#1F1A29]" role="img" aria-label={`${s.wins} wins, ${s.losses} losses, ${s.breakEven} break-even`}>
+              {s.wins > 0 && <div style={{ width: `${(s.wins / s.n) * 100}%`, backgroundColor: '#22C55E' }} />}
+              {s.breakEven > 0 && <div style={{ width: `${(s.breakEven / s.n) * 100}%`, backgroundColor: '#6B7280' }} />}
+              {s.losses > 0 && <div style={{ width: `${(s.losses / s.n) * 100}%`, backgroundColor: '#EF4444' }} />}
+            </div>
+            <div className="flex justify-between text-[11px] mt-2"><span className="text-[#22C55E]">{s.wins} wins</span><span className="text-[#9CA3AF]">{s.breakEven} break-even</span><span className="text-[#EF4444]">{s.losses} losses</span></div>
+          </div>
+
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4" data-testid="edge-r">
+            <p className="text-[10px] tracking-wide text-[#6B7280] mb-1">R-multiple distribution</p>
+            {rDist.rCount === 0 ? (
+              <p className="text-[11px] text-[#6B7280] leading-relaxed">R unavailable — none of these trades have a valid initial risk recorded (imported trades without a stop loss, for example).</p>
+            ) : (
+              <>
+                <p className="text-[10px] text-[#6B7280] mb-3">Based on {rDist.rCount} of {s.n} trades with valid initial risk.{rDist.rCount < 10 ? ' Small sample — read the shape cautiously.' : ''}</p>
+                <div className="h-40">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={rDist.bins} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                      <XAxis dataKey="label" tick={{ fill: '#6B7280', fontSize: 9 }} axisLine={false} tickLine={false} interval={0} />
+                      <Tooltip content={<EdgeRTooltip />} />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]}>{rDist.bins.map((b, i) => <Cell key={i} fill={b.hi <= 0 ? '#EF4444' : '#22C55E'} />)}</Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </>
+            )}
+          </div>
+
+          {breakdowns.map(g => (
+            <div key={g.heading} className="space-y-2">
+              <p className="text-[10px] uppercase tracking-wide text-[#6B7280] pt-2">{g.heading}</p>
+              {g.items.map(it => <EdgeBreakdownSection key={it.id} title={it.title} bd={it.bd} note={it.note} />)}
+            </div>
+          ))}
+
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-wide text-[#6B7280] pt-2">Planned vs actual execution</p>
+            <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-4 space-y-2" data-testid="edge-pva">
+              {pva.count === 0 ? (
+                <p className="text-[11px] text-[#6B7280] leading-relaxed">No closed trade in this view has saved planned values, so execution versus plan can't be analysed yet.</p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-[#9CA3AF]">{pva.count} of {pva.total} trades kept their original plan.{pva.count < 10 ? ' Small sample.' : ''}</p>
+                  <div className="grid grid-cols-2 gap-3 text-[11px]">
+                    <div><p className="text-[#6B7280] text-[10px]">Entry vs plan</p><p className="font-semibold">{pva.entry.adverse} worse · {pva.entry.favorable} better · {pva.entry.same} same</p></div>
+                    <div><p className="text-[#6B7280] text-[10px]">Stop changed</p><p className="font-semibold">{pva.stopChanged} of {pva.stopCompared}</p></div>
+                    <div><p className="text-[#6B7280] text-[10px]">Size changed</p><p className="font-semibold">{pva.sizeChanged} of {pva.sizeCompared}</p></div>
+                    <div><p className="text-[#6B7280] text-[10px]">Actual vs planned risk</p><p className="font-semibold">{pva.risk.avgActualOverPlanned === null ? '—' : `${pva.risk.avgActualOverPlanned.toFixed(2)}×`}</p></div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+            <button type="button" onClick={() => setShowHow(v => !v)} className="w-full flex items-center justify-between px-4 py-3.5 text-left">
+              <p className="text-[12px] font-medium">How these numbers are calculated</p>
+              <ChevronLeft size={14} className={`text-[#6B7280] shrink-0 transition-transform ${showHow ? '-rotate-90' : 'rotate-180'}`} />
+            </button>
+            {showHow && (
+              <div className="px-4 pb-4 space-y-2 text-[11px] text-[#9CA3AF] leading-relaxed">
+                <p><b className="text-[#E8E9EC]">Which trades:</b> only closed trades with a saved P&amp;L. Planned, open and cancelled trades are never counted.</p>
+                <p><b className="text-[#E8E9EC]">Win / loss / break-even:</b> P&amp;L above 0 is a win, below 0 a loss, exactly 0 break-even. Break-even trades stay in the win-rate denominator.</p>
+                <p><b className="text-[#E8E9EC]">Win rate</b> = wins ÷ closed trades. <b className="text-[#E8E9EC]">Average win</b> = total profit ÷ wins. <b className="text-[#E8E9EC]">Average loss</b> = total loss ÷ losses (shown as a positive amount).</p>
+                <p><b className="text-[#E8E9EC]">Expectancy</b> = net P&amp;L ÷ closed trades. <b className="text-[#E8E9EC]">Profit factor</b> = gross profit ÷ gross loss; shown as N/A when there are no losses.</p>
+                <p><b className="text-[#E8E9EC]">R-multiple:</b> uses the R saved on each trade, and only when that trade has an initial risk above zero. Others are left out and counted.</p>
+                <p><b className="text-[#E8E9EC]">Max drawdown:</b> biggest fall from a peak in cumulative closed-trade P&amp;L, starting from 0. It is not account-equity drawdown (deposits and balances aren't used).</p>
+                <p><b className="text-[#E8E9EC]">Order:</b> trades are ordered by trade date, then by the order they were logged.</p>
+                <p><b className="text-[#E8E9EC]">Fees:</b> P&amp;L is the saved P&amp;L. Delta Exchange imports are already net of trading fees; manual trades only include fees if you entered your P&amp;L that way.</p>
+                <p><b className="text-[#E8E9EC]">Sample warnings:</b> fewer than {EDGE_VERY_SMALL} trades = very small sample; fewer than {EDGE_SMALL} = small sample. These are rough guides, not statistical guarantees.</p>
+                <p><b className="text-[#E8E9EC]">Self-reported fields</b> (emotion, mistakes, discipline) show association, not cause.</p>
+              </div>
+            )}
+          </div>
+          <p className="text-[10px] text-[#6B7280] leading-relaxed">Educational analytics of your own journal. Not financial advice. Past results do not predict future results.</p>
+        </>
+      )}
+    </>
+  );
+}
+
+function StatsView({ trades, allTrades, loading, loadError }) {
   const [showManager, setShowManager] = useState(false);
   const [showPsych, setShowPsych] = useState(false);
   const [showCoach, setShowCoach] = useState(false);
   const [showMentor, setShowMentor] = useState(false);
   const [showRules, setShowRules] = useState(false);
   const [showRisk, setShowRisk] = useState(false);
+  const [showEdge, setShowEdge] = useState(false);
+  if (showEdge) return <EdgeAnalyticsView trades={allTrades || trades} loading={loading} loadError={loadError} onClose={() => setShowEdge(false)} />;
   if (showManager) return <StrategyManager trades={trades} onClose={() => setShowManager(false)} />;
   if (showPsych) return <PsychologyView trades={trades} onClose={() => setShowPsych(false)} />;
   if (showCoach) return <CoachView trades={trades} onClose={() => setShowCoach(false)} />;
@@ -2880,6 +3487,7 @@ function StatsView({ trades }) {
   if (trades.length === 0) {
     return (
       <>
+        <button onClick={() => setShowEdge(true)} className="w-full py-3.5 rounded-xl text-[13px] font-semibold bg-[#6B21A8] text-white flex items-center justify-center gap-2"><BarChart3 size={15} /> Trading Edge Analytics</button>
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategy Perf.</button>
           <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
@@ -2894,14 +3502,12 @@ function StatsView({ trades }) {
     );
   }
 
-  const totalPnl = trades.reduce((a, t) => a + (Number(t.pnl) || 0), 0);
-  const wins = trades.filter(t => Number(t.pnl) > 0);
-  const losses = trades.filter(t => Number(t.pnl) < 0);
-  const winRate = (wins.length / trades.length) * 100;
-  const grossProfit = wins.reduce((a, t) => a + Number(t.pnl), 0);
-  const grossLoss = Math.abs(losses.reduce((a, t) => a + Number(t.pnl), 0));
-  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : (grossProfit > 0 ? Infinity : 0);
-  const expectancy = totalPnl / trades.length;
+  // Headline numbers come from the shared analytics engine so every screen agrees (see EDGE ANALYTICS ENGINE).
+  const eng = edgeStats(edgeScope(trades).list);
+  const winRate = eng.winRate === null ? 0 : eng.winRate;
+  const profitFactor = eng.profitFactor; // null = no losing trades -> shown as N/A, never an infinity
+  const expectancy = eng.expectancy === null ? 0 : eng.expectancy;
+  const maxDD = eng.drawdown.maxDrawdown;
 
   function groupBy(keyFn) {
     const map = {};
@@ -2917,14 +3523,6 @@ function StatsView({ trades }) {
   const byStrategy = groupBy(t => t.strategy && t.strategy.trim());
   const byMarket = groupBy(t => t.market);
 
-  const chronological = [...trades].sort((a, b) => new Date(a.date) - new Date(b.date));
-  let running = 0, peak = -Infinity, maxDD = 0;
-  chronological.forEach(t => {
-    running += Number(t.pnl) || 0;
-    peak = Math.max(peak, running);
-    maxDD = Math.max(maxDD, peak - running);
-  });
-
   const monthMap = {};
   trades.forEach(t => {
     if (!t.date) return;
@@ -2939,6 +3537,7 @@ function StatsView({ trades }) {
 
   return (
     <>
+      <button onClick={() => setShowEdge(true)} className="w-full py-3.5 rounded-xl text-[13px] font-semibold bg-[#6B21A8] text-white flex items-center justify-center gap-2"><BarChart3 size={15} /> Trading Edge Analytics</button>
       <div className="grid grid-cols-2 gap-2">
         <button onClick={() => setShowManager(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Target size={14} /> Strategy Perf.</button>
         <button onClick={() => setShowPsych(true)} className="py-3 rounded-xl text-[12px] font-medium bg-[#070509] border border-white/[0.06] text-[#6B21A8] flex flex-col items-center justify-center gap-1"><Activity size={14} /> Psychology</button>
@@ -2947,7 +3546,7 @@ function StatsView({ trades }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         <StatCard label="Win Rate" value={`${winRate.toFixed(0)}%`} icon={Target} />
-        <StatCard label="Profit Factor" value={profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)} icon={Activity} positive={profitFactor > 1} negative={profitFactor < 1 && profitFactor !== Infinity} />
+        <StatCard label="Profit Factor" value={profitFactor === null ? 'N/A' : profitFactor.toFixed(2)} sub={profitFactor === null ? (eng.profitFactorNote === 'no_losses' ? 'no losing trades' : 'no P&L yet') : undefined} icon={Activity} positive={profitFactor !== null && profitFactor > 1} negative={profitFactor !== null && profitFactor < 1} />
         <StatCard label="Expectancy" value={fmtMoney(expectancy) + '/trade'} positive={expectancy > 0} negative={expectancy < 0} icon={TrendingUp} />
         <StatCard label="Max Drawdown" value={'-' + fmtMoney(maxDD).replace('+', '').replace('-', '')} negative={maxDD > 0} icon={TrendingDown} />
       </div>
@@ -4219,7 +4818,7 @@ function AppShell({ user, onLogout }) {
         {active === 'dashboard' && <DashboardView trades={trades.filter(t => (t.status || 'closed') === 'closed')} openCount={trades.filter(t => t.status === 'open').length} plannedCount={trades.filter(t => t.status === 'planned').length} loading={loading} />}
         {active === 'trades' && <TradesTab trades={trades} onAdd={handleAdd} onUpdate={handleUpdate} onDelete={handleDelete} dbError={dbError} />}
         {active === 'calendar' && <CalendarView trades={trades.filter(t => (t.status || 'closed') === 'closed')} />}
-        {active === 'stats' && <StatsView trades={trades.filter(t => (t.status || 'closed') === 'closed')} />}
+        {active === 'stats' && <StatsView trades={trades.filter(t => (t.status || 'closed') === 'closed')} allTrades={trades} loading={loading} loadError={dbError} />}
         {active === 'journal' && <JournalView />}
         {active === 'more' && <MoreView onOpenTool={setMoreDetailView} />}
         </>
