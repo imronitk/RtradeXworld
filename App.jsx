@@ -169,6 +169,8 @@ function fromDb(row) {
     plannedPositionSize: row.planned_position_size, plannedRisk: row.planned_risk_amount,
     plannedAt: row.planned_at, executedAt: row.executed_at, closedAt: row.closed_at, cancelledAt: row.cancelled_at,
     cancellationReason: row.cancellation_reason,
+    connectionId: row.connection_id || null, tradeKey: row.trade_key || null, feesTotal: row.fees_total, currency: row.currency || null,
+    contractValue: row.contract_value, needsReview: !!row.needs_review, reviewReason: row.review_reason || null,
   };
 }
 async function uploadScreenshot(file) {
@@ -297,7 +299,7 @@ function reconstructDeltaTrades(rows, existingFingerprints) {
     const exitTime = exitFills.length ? exitFills[exitFills.length - 1].time : entryTime;
     const dateOnly = (entryTime || '').slice(0, 10);
     const trade = {
-      date: dateOnly || new Date().toISOString().slice(0, 10),
+      date: dateOnly || localToday(),
       market: 'Crypto',
       symbol: contract,
       direction,
@@ -504,6 +506,11 @@ const MARKET_CONDITIONS = ['Trending', 'Ranging', 'Volatile', 'Low Volatility', 
 const YES_PARTIAL_NO = ['Yes', 'Partially', 'No'];
 const inputCls = "w-full bg-[#0C0810] border border-white/[0.08] rounded-xl px-3.5 py-2.5 text-[12px] text-[#E8E9EC] placeholder:text-[#4B5563] focus:outline-none focus:border-[#6B21A8]/50 transition-colors";
 
+// Today's calendar date (YYYY-MM-DD) from the device clock, in LOCAL time.
+// Never use new Date().toISOString().slice(0, 10) for "today": that is the UTC date, which is already
+// "yesterday" for the first hours of the day in timezones ahead of UTC (e.g. India before 05:30) and
+// "tomorrow" in the evening for timezones behind it (e.g. California after 5pm).
+function localToday() { return edgeLocalToday(); }
 function fmtMoney(n) { const sign = n > 0 ? '+' : n < 0 ? '-' : ''; return `${sign}$${Math.abs(n).toFixed(2)}`; }
 function Field({ label, children }) { return <div><label className="text-[10px] tracking-wide text-[#6B7280] mb-1.5 block">{label}</label>{children}</div>; }
 function StatCard({ label, value, positive, negative, icon: Icon, sub, compact, important }) {
@@ -518,12 +525,14 @@ function StatCard({ label, value, positive, negative, icon: Icon, sub, compact, 
 }
 
 function DashboardView({ trades, loading, openCount = 0, plannedCount = 0 }) {
+  // Trade dates are plain YYYY-MM-DD strings, so compare them as strings against LOCAL calendar boundaries.
+  // (new Date('2026-10-16') is UTC midnight, which landed on the previous local day for users west of UTC.)
   const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const startOfWeek = new Date(startOfToday); startOfWeek.setDate(startOfToday.getDate() - startOfToday.getDay());
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfToday = edgeLocalToday(now);
+  const startOfWeek = edgeLocalToday(new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay())); // weeks start Sunday (unchanged)
+  const startOfMonth = startOfToday.slice(0, 7) + '-01';
   const sumPnl = (list) => list.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
-  const inRange = (t, from) => t.date && new Date(t.date) >= from;
+  const inRange = (t, fromStr) => typeof t.date === 'string' && t.date.slice(0, 10) >= fromStr;
   const todayPnl = sumPnl(trades.filter(t => inRange(t, startOfToday)));
   const weekPnl = sumPnl(trades.filter(t => inRange(t, startOfWeek)));
   const monthPnl = sumPnl(trades.filter(t => inRange(t, startOfMonth)));
@@ -598,7 +607,7 @@ function DashboardView({ trades, loading, openCount = 0, plannedCount = 0 }) {
 }
 
 function TradeForm({ initial, onSave, saveLabel }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const base = {
     date: today, market: 'Forex', symbol: '', direction: 'long', entry: '', exit: '', stopLoss: '', positionSize: '',
     strategy: '', setup: '', emotion: 'Calm', mistake: 'None', confidence: 3, notes: '', screenshotUrl: null,
@@ -643,15 +652,21 @@ function TradeForm({ initial, onSave, saveLabel }) {
   }
 
   const isPlanMode = isNewTrade && mode === 'plan';
+  const isBroker = !!(initial && initial.connectionId); // broker-verified trade: prices, size, fees and P&L belong to the broker
   const entryN = parseFloat(form.entry), exitN = parseFloat(form.exit), stopN = parseFloat(form.stopLoss), qtyN = parseFloat(form.positionSize);
-  const hasPlanNumbers = !isNaN(entryN) && !isNaN(stopN) && !isNaN(qtyN) && qtyN > 0;
+  const hasPlanNumbers = !isNaN(entryN) && (isBroker || !isNaN(stopN)) && !isNaN(qtyN) && qtyN > 0;
   const hasNumbers = hasPlanNumbers && !isNaN(exitN);
+  const brokerCv = isBroker ? Number(initial.contractValue) : 1;
   let pnl = null, riskDollar = 0, rMultiple = null;
-  if (hasPlanNumbers) {
+  if (hasPlanNumbers && !isNaN(stopN)) {
     const riskPerUnit = Math.abs(entryN - stopN);
-    riskDollar = riskPerUnit * qtyN;
+    riskDollar = isBroker ? (brokerCv > 0 ? riskPerUnit * qtyN * brokerCv : 0) : riskPerUnit * qtyN;
   }
-  if (hasNumbers) {
+  if (isBroker) {
+    // P&L comes from Delta (net of fees, with contract size). It is never recomputed from prices here.
+    pnl = initial.pnl === null || initial.pnl === undefined ? null : Number(initial.pnl);
+    rMultiple = pnl !== null && riskDollar > 0 ? pnl / riskDollar : null;
+  } else if (hasNumbers) {
     pnl = form.direction === 'long' ? (exitN - entryN) * qtyN : (entryN - exitN) * qtyN;
     rMultiple = riskDollar > 0 ? pnl / riskDollar : null; // no valid initial risk -> R unavailable, never an invented value
   }
@@ -664,11 +679,24 @@ function TradeForm({ initial, onSave, saveLabel }) {
     setLocalError('');
     const nowIso = new Date().toISOString();
     const resolvedStatus = isPlanMode ? 'planned' : (closingMode ? 'closed' : (form.status || 'closed'));
+    // Planned-vs-actual: while a trade is still a plan, the plan values ARE the current values (a plan can be revised freely).
+    // Once it leaves "planned", the last saved plan is frozen so later actual entry/stop/size can differ from it.
+    // A plan saved before this existed has no stored plan values: recover them from what was saved as the plan (initial).
+    const missingPlan = (v) => v === null || v === undefined || v === '';
+    const tpNum = parseFloat(form.takeProfit);
+    let planFields = {};
+    if (resolvedStatus === 'planned') {
+      planFields = { plannedEntry: entryN, plannedStopLoss: stopN, plannedTakeProfit: Number.isFinite(tpNum) ? tpNum : '', plannedPositionSize: qtyN, plannedRisk: riskDollar };
+    } else if (initial?.status === 'planned' && missingPlan(initial.plannedEntry)) {
+      planFields = { plannedEntry: initial.entry, plannedStopLoss: initial.stopLoss, plannedTakeProfit: missingPlan(initial.takeProfit) ? '' : initial.takeProfit, plannedPositionSize: initial.positionSize, plannedRisk: initial.risk };
+    }
     const full = {
       ...form,
-      entry: entryN, exit: isNaN(exitN) ? null : exitN, stopLoss: stopN, positionSize: qtyN,
-      risk: riskDollar, pnl: pnl === null ? null : Number(pnl.toFixed(2)), rMultiple: rMultiple === null ? null : Number(rMultiple.toFixed(2)),
-      status: resolvedStatus,
+      ...planFields,
+      entry: isBroker ? initial.entry : entryN, exit: isBroker ? (initial.exit === undefined ? null : initial.exit) : (isNaN(exitN) ? null : exitN),
+      stopLoss: Number.isNaN(stopN) ? null : stopN, positionSize: isBroker ? initial.positionSize : qtyN,
+      risk: riskDollar > 0 ? riskDollar : (isBroker ? null : riskDollar), pnl: isBroker ? pnl : (pnl === null ? null : Number(pnl.toFixed(2))), rMultiple: rMultiple === null ? null : Number(rMultiple.toFixed(2)),
+      status: isBroker ? initial.status : resolvedStatus,
       plannedAt: isPlanMode ? nowIso : form.plannedAt,
       closedAt: closingMode ? nowIso : form.closedAt,
     };
@@ -693,6 +721,14 @@ function TradeForm({ initial, onSave, saveLabel }) {
 
   return (
     <>
+      {isBroker && (
+        <div className="space-y-2" data-testid="broker-trade-banner">
+          <div className="rounded-xl bg-[#6B21A8]/10 border border-[#6B21A8]/30 px-4 py-3 text-[11px] text-[#B58BE0] leading-snug">Broker-verified trade from Delta Exchange. Symbol, prices, size, fees and P&amp;L come from your broker and can't be edited here. Add your own strategy, stop loss, notes and review below.</div>
+          {initial.needsReview && (
+            <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B] leading-snug" data-testid="broker-review-banner"><b>Needs review.</b> {String(initial.reviewReason || '').split(',').filter(Boolean).map(r => BROKER_REVIEW_TEXT[r] || r).join(' ')}</div>
+          )}
+        </div>
+      )}
       {isNewTrade ? (
         <div className="grid grid-cols-2 gap-2">
           <button onClick={() => setMode('quick')} className={`py-2.5 rounded-xl text-[12px] font-medium border ${mode === 'quick' ? 'bg-[#6B21A8]/20 border-[#6B21A8]/60 text-[#B58BE0]' : 'bg-[#0C0810] border-white/[0.08] text-[#9CA3AF]'}`}>Quick Journal</button>
@@ -704,14 +740,14 @@ function TradeForm({ initial, onSave, saveLabel }) {
             <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: statusBadge[1], backgroundColor: statusBadge[1] + '22' }}>{statusBadge[0]}</span>
             <p className="text-[11px] text-[#6B7280]">{form.status === 'planned' ? 'No exit recorded yet — this is a plan, not a completed trade.' : form.status === 'open' ? 'Trade is open — close it below once you have an exit.' : form.status === 'cancelled' ? 'This plan was cancelled.' : ''}</p>
           </div>
-          {form.status === 'planned' && !cancelling && (
+          {form.status === 'planned' && !cancelling && !isBroker && (
             <div className="flex gap-2">
               <button onClick={() => setForm(f => ({ ...f, status: 'open', executedAt: new Date().toISOString() }))} className="flex-1 py-2.5 rounded-xl text-[12px] font-medium bg-[#3B82F6]/15 border border-[#3B82F6]/40 text-[#3B82F6]">Mark as Open</button>
               <button onClick={() => setClosingMode(true)} className="flex-1 py-2.5 rounded-xl text-[12px] font-medium bg-[#22C55E]/15 border border-[#22C55E]/40 text-[#22C55E]">Close Trade</button>
               <button onClick={() => setCancelling(true)} className="flex-1 py-2.5 rounded-xl text-[12px] font-medium bg-[#EF4444]/10 border border-[#EF4444]/30 text-[#EF4444]">Cancel Plan</button>
             </div>
           )}
-          {form.status === 'open' && !closingMode && (
+          {form.status === 'open' && !closingMode && !isBroker && (
             <button onClick={() => setClosingMode(true)} className="w-full py-2.5 rounded-xl text-[12px] font-medium bg-[#22C55E]/15 border border-[#22C55E]/40 text-[#22C55E]">Close Trade</button>
           )}
           {cancelling && (
@@ -728,24 +764,24 @@ function TradeForm({ initial, onSave, saveLabel }) {
 
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Date"><input type="date" value={form.date} onChange={set('date')} className={inputCls} /></Field>
-          <Field label="Market"><select value={form.market} onChange={set('market')} className={inputCls}>{MARKETS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
+          <Field label="Date"><input type="date" value={form.date} onChange={set('date')} disabled={isBroker} className={inputCls} /></Field>
+          <Field label="Market"><select value={form.market} onChange={set('market')} disabled={isBroker} className={inputCls}>{MARKETS.map(m => <option key={m} value={m}>{m}</option>)}</select></Field>
         </div>
-        <Field label="Symbol"><input type="text" placeholder="e.g. EURUSD, AAPL, BTCUSD" value={form.symbol} onChange={set('symbol')} className={inputCls} /></Field>
+        <Field label="Symbol"><input type="text" placeholder="e.g. EURUSD, AAPL, BTCUSD" value={form.symbol} onChange={set('symbol')} disabled={isBroker} className={inputCls} /></Field>
         <Field label="Direction">
           <div className="grid grid-cols-2 gap-2">
             {['long', 'short'].map(d => (
-              <button key={d} onClick={() => setForm(f => ({ ...f, direction: d }))} className={`py-2.5 rounded-xl text-[12px] font-medium border transition-colors ${form.direction === d ? (d === 'long' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]') : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>{d === 'long' ? 'Long' : 'Short'}</button>
+              <button key={d} onClick={() => setForm(f => ({ ...f, direction: d }))} disabled={isBroker} className={`py-2.5 rounded-xl text-[12px] font-medium border transition-colors ${form.direction === d ? (d === 'long' ? 'bg-[#22C55E]/15 border-[#22C55E]/50 text-[#22C55E]' : 'bg-[#EF4444]/15 border-[#EF4444]/50 text-[#EF4444]') : 'bg-[#0C0810] border-white/[0.08] text-[#6B7280]'}`}>{d === 'long' ? 'Long' : 'Short'}</button>
             ))}
           </div>
         </Field>
       </div>
       <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.entry} onChange={set('entry')} className={inputCls} /></Field>
-          {(isNewTrade ? !isPlanMode : (form.status === 'closed' || closingMode)) && <Field label="Exit Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.exit} onChange={set('exit')} className={inputCls} /></Field>}
+          <Field label="Entry Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.entry} onChange={set('entry')} disabled={isBroker} className={inputCls} /></Field>
+          {(isNewTrade ? !isPlanMode : (form.status === 'closed' || closingMode)) && <Field label="Exit Price"><input inputMode="decimal" type="number" placeholder="0.00" value={form.exit} onChange={set('exit')} disabled={isBroker} className={inputCls} /></Field>}
           <Field label="Stop Loss"><input inputMode="decimal" type="number" placeholder="0.00" value={form.stopLoss} onChange={set('stopLoss')} className={inputCls} /></Field>
-          <Field label="Position Size"><input inputMode="decimal" type="number" placeholder="0" value={form.positionSize} onChange={set('positionSize')} className={inputCls} /></Field>
+          <Field label="Position Size"><input inputMode="decimal" type="number" placeholder="0" value={form.positionSize} onChange={set('positionSize')} disabled={isBroker} className={inputCls} /></Field>
           {(isPlanMode || form.status === 'planned' || form.status === 'open') && <Field label="Take Profit (optional)"><input inputMode="decimal" type="number" placeholder="0.00" value={form.takeProfit} onChange={set('takeProfit')} className={inputCls} /></Field>}
         </div>
         {hasNumbers && (
@@ -923,7 +959,7 @@ function LedgerView({ trades, onEdit }) {
         <div className="space-y-2">
           {list.map(t => (
             <button key={t.id} onClick={() => onEdit(t)} className="w-full text-left rounded-xl bg-[#070509] border border-white/[0.06] px-4 py-3 flex items-center justify-between active:bg-[#0C0810] transition-colors">
-              <div><p className="font-display text-[12px] font-semibold flex items-center gap-1.5">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'} · {t.market}</span>{t.screenshotUrl && <Camera size={12} className="text-[#6B7280] shrink-0" />}</p><p className="text-[10px] text-[#6B7280]">{t.date}</p></div>
+              <div><p className="font-display text-[12px] font-semibold flex items-center gap-1.5">{t.symbol} <span className="text-[#6B7280] font-normal">· {t.direction === 'long' ? 'Long' : 'Short'} · {t.market}</span>{t.connectionId && <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#6B21A8]/20 text-[#B58BE0]">Broker</span>}{t.needsReview && <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#F59E0B]/15 text-[#F59E0B]">Review</span>}{t.screenshotUrl && <Camera size={12} className="text-[#6B7280] shrink-0" />}</p><p className="text-[10px] text-[#6B7280]">{t.date}</p></div>
               {(t.status || 'closed') === 'closed' ? (
                 <div className="text-right"><p className="text-[12px] font-semibold" style={{ color: t.pnl > 0 ? '#22C55E' : t.pnl < 0 ? '#EF4444' : '#E8E9EC' }}>{t.pnl > 0 ? '+' : ''}{Number(t.pnl).toFixed(2)}</p><p className="text-[10px] text-[#6B7280]">{t.rMultiple === null || t.rMultiple === undefined ? 'R unavailable' : `${Number(t.rMultiple).toFixed(2)}R`}</p></div>
               ) : (
@@ -1291,7 +1327,8 @@ function generateInsights(trades) {
   const dowMap = {};
   trades.forEach(t => {
     if (!t.date) return;
-    const d = new Date(t.date).getDay();
+    const d = new Date(String(t.date).slice(0, 10) + 'T00:00:00Z').getUTCDay(); // UTC getter on a UTC-parsed date = the weekday written in the date
+    if (Number.isNaN(d)) return;
     if (!dowMap[d]) dowMap[d] = { day: dowNames[d], pnl: 0, count: 0 };
     dowMap[d].pnl += Number(t.pnl) || 0;
     dowMap[d].count += 1;
@@ -1619,7 +1656,7 @@ function applyCoachScope(closed, scope, now = new Date()) {
   const days = scope === 'Last 30 days' ? 30 : scope === 'Last 90 days' ? 90 : null;
   if (days) {
     const cutoff = new Date(now.getTime()); cutoff.setDate(cutoff.getDate() - days);
-    const cs = cutoff.toISOString().slice(0, 10);
+    const cs = edgeLocalToday(cutoff);
     return sorted.filter(t => t.date >= cs);
   }
   return sorted;
@@ -2638,7 +2675,7 @@ function RiskManagementView({ trades, onClose }) {
   const defaultRiskValue = tradingAccount?.default_risk_value ?? null;
   const defaultRiskMethod = tradingAccount?.default_risk_method ?? 'percentage';
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = localToday();
   const todaysTrades = trades.filter(t => t.date === todayStr);
   const todaysGrossProfit = todaysTrades.filter(t => Number(t.pnl) > 0).reduce((a, t) => a + Number(t.pnl), 0);
   const todaysGrossLoss = Math.abs(todaysTrades.filter(t => Number(t.pnl) < 0).reduce((a, t) => a + Number(t.pnl), 0));
@@ -3576,7 +3613,7 @@ function StatsView({ trades, allTrades, loading, loadError }) {
 const MOODS = ['Calm', 'Confident', 'Anxious', 'Excited', 'Frustrated', 'Neutral', 'Tired', 'Motivated'];
 
 function JournalView() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localToday();
   const empty = { date: today, mood: 'Calm', confidence: 3, preMarketPlan: '', postMarketReview: '', lessonsLearned: '', mistakes: '', tomorrowFocus: '' };
   const [form, setForm] = useState(empty);
   const [entries, setEntries] = useState([]);
@@ -4653,6 +4690,190 @@ function SettingsView({ user, onClose, onLogout }) {
   );
 }
 
+// ===== BROKER CONNECTIONS (Delta Exchange, read-only) =====
+const BROKER_REVIEW_TEXT = {
+  contract_value_unavailable: "Delta didn't provide the contract size, so P&L is not shown.",
+  inverse_contract_not_supported: 'This contract type is not supported yet, so P&L is not shown.',
+  contract_type_not_reported_assumed_linear: "Delta didn't report the contract type. P&L assumes a standard (linear) contract — please confirm it against Delta.",
+  fees_not_deducted_currency_unknown_or_different: 'Fees are in a different currency than P&L, so they are not subtracted.',
+  fees_not_deducted_missing_commission: "Delta didn't report a fee for some fills, so fees are not subtracted.",
+};
+async function apiBroker(action, payload = {}) {
+  const res = await fetch('/api/broker', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: HEADERS.Authorization }, body: JSON.stringify({ action, ...payload }) });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* non-JSON error page */ }
+  if (!res.ok) { const err = new Error(data.error || 'Something went wrong. Please try again.'); err.code = data.code; err.data = data; throw err; }
+  return data;
+}
+async function apiGetBrokerConnection() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/broker_connections?status=neq.disconnected&order=created_at.desc&limit=1&select=*`, { headers: HEADERS });
+  if (!res.ok) throw new Error('not_ready');
+  return (await res.json())[0] || null;
+}
+function timeAgo(iso) {
+  if (!iso) return 'never';
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+const BROKER_STATES = {
+  active: ['Connected', '#22C55E'], syncing: ['Syncing', '#B58BE0'], auth_failed: ['Authentication failed', '#EF4444'],
+  sync_error: ['Sync error', '#F59E0B'], disconnected: ['Disconnected', '#6B7280'],
+};
+const DIAG_LABELS = { id: 'Fill ID', symbol: 'Symbol', side: 'Side', size: 'Size', price: 'Price', created_at: 'Time', commission: 'Fee', order_id: 'Order ID', contract_value: 'Contract size', notional_type: 'Contract type', quoting_asset: 'Quote currency', settling_asset: 'Settlement currency' };
+
+function BrokerConnectionsView({ trades, onClose, onSynced }) {
+  const [conn, setConn] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [setupMissing, setSetupMissing] = useState(false);
+  const [form, setForm] = useState({ environment: 'production', apiKey: '', apiSecret: '' });
+  const [busy, setBusy] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [diag, setDiag] = useState(null);
+  const [showDiag, setShowDiag] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [deleteFills, setDeleteFills] = useState(false);
+
+  async function load() {
+    try { setConn(await apiGetBrokerConnection()); setSetupMissing(false); }
+    catch (e) { setSetupMissing(true); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function runSync(id) {
+    setBusy('sync'); setError('');
+    try {
+      const data = await apiBroker('sync', { connectionId: id });
+      const s = data.summary;
+      setNotice(`Synced ${s.fills_in_ledger} fills into ${s.trades_total} trade${s.trades_total === 1 ? '' : 's'}${s.trades_created ? ` (${s.trades_created} new)` : ''}.${s.truncated ? ' Only the newest 10,000 fills were read.' : ''}`);
+      await load();
+      if (onSynced) await onSynced();
+    } catch (e) { setError(e.message); await load(); }
+    finally { setBusy(null); }
+  }
+  async function connect() {
+    if (busy) return;
+    setBusy('connect'); setError(''); setNotice(''); setDiag(null);
+    try {
+      const data = await apiBroker('connect', form);
+      setForm(f => ({ ...f, apiKey: '', apiSecret: '' }));   // the secret never stays in the page
+      setConn(data.connection); setDiag(data.diagnostics); setNotice('Connected. Importing your trades…');
+      await runSync(data.connection.id);
+    } catch (e) {
+      setError(e.message); if (e.data && e.data.diagnostics) setDiag(e.data.diagnostics);
+      setForm(f => ({ ...f, apiSecret: '' }));
+      setBusy(null);
+    }
+  }
+  async function disconnect() {
+    setBusy('disconnect'); setError('');
+    try { await apiBroker('disconnect', { connectionId: conn.id, deleteFills }); setConn(null); setConfirmDisconnect(false); setDeleteFills(false); setNotice('Disconnected. Your key was deleted from our server. Your trades and notes were kept.'); setDiag(null); }
+    catch (e) { setError(e.message); }
+    finally { setBusy(null); }
+  }
+
+  const csvCount = (trades || []).filter(t => t.importSource === 'delta_exchange' || t.import_source === 'delta_exchange').length;
+  const needsReview = (trades || []).filter(t => t.needsReview).length;
+  const st = conn ? (BROKER_STATES[conn.status] || BROKER_STATES.sync_error) : null;
+  const d = (conn && conn.diagnostics) || diag;
+  const summary = conn && conn.sync_summary;
+  const canConnect = form.apiKey.trim().length >= 8 && form.apiSecret.trim().length >= 16 && !busy;
+
+  return (
+    <>
+      <button onClick={onClose} className="flex items-center gap-1 text-[12px] text-[#6B7280]"><ChevronLeft size={16} /> Back</button>
+      <div className="rounded-2xl bg-gradient-to-br from-[#070509] to-[#08060D] border border-white/[0.06] p-5">
+        <p className="text-[12px] font-semibold mb-1">Broker Connections</p>
+        <p className="text-[12px] text-[#6B7280] leading-relaxed">Delta Exchange India · read-only. Your trades are imported automatically. This app can never place, change or cancel an order.</p>
+      </div>
+
+      {loading && <p className="text-[12px] text-[#6B7280]">Loading…</p>}
+      {setupMissing && !loading && (
+        <div className="rounded-xl bg-[#F59E0B]/10 border border-[#F59E0B]/30 px-4 py-3 text-[11px] text-[#F59E0B] leading-snug" data-testid="broker-setup">Broker connections need a one-time database setup that hasn't been done yet (the Phase 11 SQL).</div>
+      )}
+      {notice && <div className="rounded-xl bg-[#22C55E]/10 border border-[#22C55E]/30 px-4 py-3 text-[11px] text-[#22C55E] leading-snug" data-testid="broker-notice">{notice}</div>}
+      {error && <div className="rounded-xl bg-[#EF4444]/10 border border-[#EF4444]/30 px-4 py-3 text-[11px] text-[#EF4444] leading-snug" data-testid="broker-error">{error}</div>}
+
+      {!loading && !setupMissing && !conn && (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-4" data-testid="broker-connect">
+          <p className="text-[12px] font-medium">Connect Delta Exchange</p>
+          <ol className="text-[11px] text-[#9CA3AF] leading-relaxed list-decimal pl-4 space-y-1">
+            <li>On Delta Exchange India, create an API key with <b className="text-[#E8E9EC]">only Read Data</b> permission. Never turn on Trading.</li>
+            <li>Paste the key and secret below.</li>
+            <li>We test the connection first, then import your trade history.</li>
+          </ol>
+          <Field label="Environment"><select value={form.environment} onChange={e => setForm(f => ({ ...f, environment: e.target.value }))} className={inputCls}><option value="production">Production (real account)</option><option value="testnet">Testnet (practice)</option></select></Field>
+          <Field label="API Key"><input type="text" autoComplete="off" autoCapitalize="off" spellCheck={false} value={form.apiKey} onChange={e => setForm(f => ({ ...f, apiKey: e.target.value }))} className={inputCls} /></Field>
+          <Field label="API Secret"><input type="password" autoComplete="new-password" autoCapitalize="off" spellCheck={false} value={form.apiSecret} onChange={e => setForm(f => ({ ...f, apiSecret: e.target.value }))} className={inputCls} /></Field>
+          <button onClick={connect} disabled={!canConnect} className="w-full py-3.5 rounded-xl font-display text-[13px] font-semibold bg-[#6B21A8] text-white disabled:opacity-40">{busy === 'connect' ? 'Testing connection…' : 'Connect & test'}</button>
+          <ul className="text-[10px] text-[#6B7280] leading-snug space-y-1 list-disc pl-4">
+            <li>Your secret is sent once over HTTPS, encrypted on our server and never shown again. It is never stored in your browser.</li>
+            <li>Delta may only accept your key from allowed IP addresses. If the test says so, this version cannot connect that key.</li>
+            {csvCount > 0 && <li className="text-[#F59E0B]">You already imported {csvCount} trade{csvCount === 1 ? '' : 's'} from a CSV. The same trades can appear twice after syncing — review them in Trades.</li>}
+          </ul>
+        </div>
+      )}
+
+      {!loading && !setupMissing && conn && (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] p-5 space-y-3" data-testid="broker-health">
+          <div className="flex items-center justify-between">
+            <p className="text-[12px] font-medium">Delta Exchange {conn.environment === 'testnet' ? '(Testnet)' : ''}</p>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded" style={{ color: st[1], backgroundColor: st[1] + '22' }} data-testid="broker-state">{st[0]}</span>
+          </div>
+          <div className="space-y-1.5 text-[12px]">
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">API key</span><span>•••• {conn.api_key_last4}</span></div>
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">Last successful sync</span><span>{timeAgo(conn.last_sync_completed_at)}</span></div>
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">Fills synced</span><span>{conn.fills_synced}</span></div>
+            <div className="flex justify-between"><span className="text-[#9CA3AF]">Trades synced</span><span>{conn.trades_synced}</span></div>
+            {summary && summary.trades_open > 0 && <div className="flex justify-between"><span className="text-[#9CA3AF]">Open positions</span><span>{summary.trades_open}</span></div>}
+            {needsReview > 0 && <div className="flex justify-between"><span className="text-[#9CA3AF]">Need your review</span><span className="text-[#F59E0B]">{needsReview}</span></div>}
+          </div>
+          {summary && summary.truncated && <p className="text-[11px] text-[#F59E0B] leading-snug">Only the newest 10,000 fills were read, so your oldest history may be missing.</p>}
+          {conn.last_error_message && conn.status !== 'active' && <p className="text-[11px] text-[#EF4444] leading-snug" data-testid="broker-last-error">{conn.last_error_message}</p>}
+          {conn.status === 'auth_failed' && <p className="text-[11px] text-[#9CA3AF] leading-snug">Disconnect, then connect again with a new Read Data key.</p>}
+          <div className="flex gap-2">
+            <button onClick={() => runSync(conn.id)} disabled={!!busy || conn.status === 'syncing'} className="flex-1 py-3 rounded-xl text-[12px] font-semibold bg-[#6B21A8] text-white disabled:opacity-40">{busy === 'sync' ? 'Syncing…' : 'Sync now'}</button>
+            <button onClick={() => setConfirmDisconnect(true)} disabled={!!busy} className="flex-1 py-3 rounded-xl text-[12px] font-medium border border-[#EF4444]/40 text-[#EF4444] disabled:opacity-40">Disconnect</button>
+          </div>
+          {confirmDisconnect && (
+            <div className="rounded-xl bg-[#0C0810] border border-[#EF4444]/30 p-4 space-y-3" data-testid="broker-confirm">
+              <p className="text-[12px] text-[#E8E9EC] leading-snug">This deletes your Delta key from our server and stops syncing. Your trades and notes are kept. Also delete the key on Delta so it can't be used elsewhere.</p>
+              <label className="flex items-center gap-2 text-[11px] text-[#9CA3AF]"><input type="checkbox" checked={deleteFills} onChange={e => setDeleteFills(e.target.checked)} /> Also delete the synced fill history (not your trades)</label>
+              <div className="flex gap-2">
+                <button onClick={() => { setConfirmDisconnect(false); setDeleteFills(false); }} className="flex-1 py-2.5 rounded-xl text-[12px] bg-[#1F1A29] text-[#9CA3AF]">Cancel</button>
+                <button onClick={disconnect} disabled={!!busy} className="flex-1 py-2.5 rounded-xl text-[12px] font-semibold bg-[#EF4444] text-white disabled:opacity-50">{busy === 'disconnect' ? 'Disconnecting…' : 'Yes, disconnect'}</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {d && !setupMissing && (
+        <div className="rounded-2xl bg-[#070509] border border-white/[0.06] overflow-hidden">
+          <button type="button" onClick={() => setShowDiag(v => !v)} className="w-full flex items-center justify-between px-4 py-3.5 text-left">
+            <p className="text-[12px] font-medium">Connection test details</p>
+            <ChevronLeft size={14} className={`text-[#6B7280] shrink-0 transition-transform ${showDiag ? '-rotate-90' : 'rotate-180'}`} />
+          </button>
+          {showDiag && (
+            <div className="px-4 pb-4 space-y-2 text-[11px] text-[#9CA3AF]" data-testid="broker-diag">
+              <p>Account check: {d.wallet ? (d.wallet.ok ? 'passed' : `failed (HTTP ${d.wallet.http})`) : 'not run'}</p>
+              <p>Trade history check: {d.fills ? (d.fills.ok ? `passed (${d.fills.sample ?? 0} sample fills)` : `failed (HTTP ${d.fills.http})`) : 'not run'}</p>
+              {d.fields && <div className="grid grid-cols-2 gap-x-3 gap-y-1">{Object.entries(d.fields).map(([k, v]) => <p key={k}>{DIAG_LABELS[k] || k}: <span className={v === 'all' ? 'text-[#22C55E]' : v === 'no_sample' ? 'text-[#6B7280]' : 'text-[#F59E0B]'}>{v === 'no_sample' ? 'no fills yet' : v}</span></p>)}</div>}
+              <p className="text-[10px] text-[#6B7280]">Shows only which fields Delta returned — never your values or keys.</p>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[10px] text-[#6B7280] leading-relaxed">Read-only connection. Realized results come from Delta's fills; open positions show no profit until they close. Educational journal, not financial advice.</p>
+    </>
+  );
+}
+// ===== END BROKER CONNECTIONS =====
+
 function MoreListItem({ icon: Icon, label, sub, onClick }) {
   return (
     <button onClick={onClick} className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl bg-[#070509] border border-white/[0.06] active:bg-[#0C0810] text-left">
@@ -4674,6 +4895,7 @@ function MoreView({ onOpenTool }) {
         <p className="text-[10px] tracking-wide text-[#6B7280] mb-2">Trading Tools</p>
         <div className="space-y-2">
           <MoreListItem icon={TrendingDown} label="Risk Manager" sub="Equity, drawdown, position size calculator" onClick={() => onOpenTool('risk')} />
+          <MoreListItem icon={ShieldCheck} label="Broker Connections" sub="Sync trades automatically from Delta Exchange" onClick={() => onOpenTool('broker')} />
           <MoreListItem icon={Upload} label="CSV Import" sub="Import trades from Delta Exchange" onClick={() => onOpenTool('csv')} />
         </div>
       </div>
@@ -4746,6 +4968,24 @@ function AppShell({ user, onLogout }) {
     }
   }
 
+  async function reloadTrades() {
+    try { const data = await withRetry(() => apiGet()); setTrades(data); }
+    catch (e) { console.error('[Broker] could not reload trades:', e); }
+  }
+  // Quietly refresh from the broker when the app opens (at most every 15 minutes). Problems show on the Broker screen.
+  useEffect(() => {
+    if (loading) return;
+    (async () => {
+      try {
+        const c = await apiGetBrokerConnection();
+        if (c && c.status === 'active' && (!c.last_sync_completed_at || Date.now() - Date.parse(c.last_sync_completed_at) > 15 * 60 * 1000)) {
+          await apiBroker('sync', { connectionId: c.id });
+          await reloadTrades();
+        }
+      } catch (e) { /* silent: the Broker Connections screen explains any problem */ }
+    })();
+  }, [loading]);
+
   const titles = {
     dashboard: ['Dashboard', 'Your Trading Overview'],
     trades: ['Trades', 'Log & Manage Trades'],
@@ -4804,6 +5044,8 @@ function AppShell({ user, onLogout }) {
           <CsvImportView trades={trades} onClose={() => setShowCsvImport(false)} onImported={(inserted) => setTrades(prev => [...inserted, ...prev])} />
         ) : moreDetailView === 'risk' ? (
           <RiskManagementView trades={trades.filter(t => (t.status || 'closed') === 'closed')} onClose={() => setMoreDetailView(null)} />
+        ) : moreDetailView === 'broker' ? (
+          <BrokerConnectionsView trades={trades} onClose={() => setMoreDetailView(null)} onSynced={reloadTrades} />
         ) : moreDetailView === 'mentor' ? (
           <AIMentorView trades={trades} onClose={() => setMoreDetailView(null)} />
         ) : moreDetailView === 'csv' ? (
